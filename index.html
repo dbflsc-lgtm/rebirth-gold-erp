@@ -166,6 +166,33 @@
     }
   };
 
+  // Firebase Storage에 사진 업로드 (base64 → Storage URL)
+  const STORAGE_BUCKET = 'rebirth-gold.firebasestorage.app';
+  window._fbUploadPhoto = async function(base64DataUrl, fileName) {
+    try {
+      const res = await fetch(base64DataUrl);
+      const blob = await res.blob();
+      const mimeType = blob.type || 'image/jpeg';
+      const path = `catalog-photos/${Date.now()}_${fileName || 'photo.jpg'}`;
+      const encodedPath = encodeURIComponent(path);
+      const uploadUrl = `https://firebasestorage.googleapis.com/v0/b/${STORAGE_BUCKET}/o?uploadType=media&name=${encodedPath}&key=${API_KEY}`;
+      const uploadRes = await fetch(uploadUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': mimeType },
+        body: blob
+      });
+      if (!uploadRes.ok) {
+        console.error('Storage upload failed:', await uploadRes.text());
+        return null;
+      }
+      const downloadUrl = `https://firebasestorage.googleapis.com/v0/b/${STORAGE_BUCKET}/o/${encodedPath}?alt=media&key=${API_KEY}`;
+      return downloadUrl;
+    } catch(e) {
+      console.error('Storage upload error:', e);
+      return null;
+    }
+  };
+
   window._fbReady = true;
   window._fbInit = async function() { return true; }; // API Key 방식은 Auth 불필요
   console.log('✅ Firebase REST API v3 준비됨 (컬렉션 분산 + API Key)');
@@ -3189,9 +3216,18 @@ let currentUser = null; // { id, name, role }
 function saveDB() {
   // localStorage 즉시 저장 (빠른 응답)
   try { localStorage.setItem('rg-erp', JSON.stringify(DB)); } catch(e) {}
-  // Firebase 클라우드 저장 (비동기)
+  // Firebase 클라우드 저장 (비동기) - 카탈로그 사진(base64)은 제외
   if (window._fbReady && window._fbSave) {
-    window._fbSave(DB).then(ok => {
+    const dbForCloud = {
+      ...DB,
+      catalog: (DB.catalog || []).map(c => {
+        const { photo, ...rest } = c;
+        // base64 이미지는 제외, URL은 유지
+        const isBase64 = typeof photo === 'string' && photo.startsWith('data:');
+        return isBase64 ? rest : { ...rest, photo };
+      })
+    };
+    window._fbSave(dbForCloud).then(ok => {
       const el = document.getElementById('fb-sync-status');
       if (el) {
         if (ok) {
@@ -4272,7 +4308,7 @@ async function importCatalogJSON(input) {
   input.value = '';
 }
 
-function saveCatalog() {
+async function saveCatalog() {
   if (!can('catalog','create') && currentUser?.role!=='admin') { toast('등록 권한이 없습니다','error'); return; }
   const name = document.getElementById('c-name').value.trim();
   if (!name) { toast('모델명을 입력해주세요','error'); return; }
@@ -4296,6 +4332,22 @@ function saveCatalog() {
     return;
   }
 
+  // ── 사진 처리: base64면 Storage에 업로드 ──────────────────────
+  let photoValue = currentPhotoData || null;
+  const isBase64 = typeof photoValue === 'string' && photoValue.startsWith('data:');
+  if (isBase64 && window._fbUploadPhoto) {
+    toast('📸 사진 업로드 중...', 'info');
+    const fileInput = document.getElementById('c-photo');
+    const fileName = fileInput?.files?.[0]?.name || 'photo.jpg';
+    const uploadedUrl = await window._fbUploadPhoto(photoValue, fileName);
+    if (uploadedUrl) {
+      photoValue = uploadedUrl;
+    } else {
+      toast('⚠ 사진 업로드 실패, 사진 없이 저장합니다', 'error');
+      photoValue = null;
+    }
+  }
+
   const formData = {
     name, mfr,
     cat:    document.getElementById('c-cat').value,
@@ -4304,7 +4356,7 @@ function saveCatalog() {
     weight: document.getElementById('c-weight').value,
     labor:  document.getElementById('c-labor').value,
     memo:   document.getElementById('c-memo').value,
-    photo:  currentPhotoData || null,
+    photo:  photoValue,
   };
 
   if (editingId) {
