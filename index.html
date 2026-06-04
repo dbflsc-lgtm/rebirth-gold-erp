@@ -4153,6 +4153,12 @@ function loadPhotoFromUrl() {
 
 function previewPhoto(input) {
   if (!input.files || !input.files[0]) return;
+  const file = input.files[0];
+  if (file.size > 1 * 1024 * 1024) {
+    toast('⚠ 사진 용량이 1MB를 초과합니다. 1MB 이하 파일을 선택해주세요.', 'error');
+    input.value = '';
+    return;
+  }
   const reader = new FileReader();
   reader.onload = e => {
     currentPhotoData = e.target.result;
@@ -4163,7 +4169,7 @@ function previewPhoto(input) {
     const lbl = document.getElementById('photo-source-label');
     if (lbl) lbl.textContent = '📁 파일 업로드됨';
   };
-  reader.readAsDataURL(input.files[0]);
+  reader.readAsDataURL(file);
 }
 
 function clearPhoto() {
