@@ -31,6 +31,7 @@
     settlements:   'erp_settlements',
     goldPurchases: 'erp_goldpurchases',
     cashLedger:    'erp_cashledger',
+    customerDeals: 'erp_customerdeals',
     goldLedger:    'erp_goldledger',
   };
   // 소용량 데이터는 meta 문서에
@@ -785,6 +786,7 @@
     <div class="nav-section">판매 · 대여</div>
     <div class="nav-item" onclick="go('sales')"><span class="nav-icon">◉</span> 판매관리</div>
     <div class="nav-item" onclick="go('unpaid')" style="padding-left:36px;font-size:12px"><span class="nav-icon" style="font-size:11px">›</span> 미수현황</div>
+    <div class="nav-item" onclick="go('customer-deals')" style="padding-left:36px;font-size:12px"><span class="nav-icon" style="font-size:11px">›</span> 고객거래</div>
     <div class="nav-item" onclick="go('rental')"><span class="nav-icon">◎</span> 대여관리</div>
 
     <div class="nav-section">시재관리</div>
@@ -1365,6 +1367,45 @@
     </div>
 
     <!-- ══ 추가 패널들 ══════════════════════════════════════════ -->
+  <!-- 고객거래 패널 -->
+  <div id="panel-customer-deals" class="panel">
+    <div class="table-wrap">
+      <div class="table-header" style="flex-wrap:wrap;gap:8px">
+        <div class="filter-bar" style="flex-wrap:wrap;gap:8px">
+          <input class="search-input" id="cd-search" placeholder="고객명/전화번호 검색..." oninput="renderCustomerDeals()" style="min-width:200px">
+          <select class="filter-sel" id="cd-status-filter" onchange="renderCustomerDeals()">
+            <option value="">전체</option>
+            <option value="unpaid">미결제</option>
+            <option value="partial">부분결제</option>
+            <option value="paid">완료</option>
+          </select>
+        </div>
+        <button class="btn btn-gold btn-sm" onclick="openCdModal()">+ 거래 등록</button>
+      </div>
+      <table style="width:100%;border-collapse:collapse">
+        <thead>
+          <tr>
+            <th style="padding:10px 12px;font-size:10px;letter-spacing:0.1em;color:var(--text3);border-bottom:1px solid var(--border);font-weight:400;text-align:left">거래번호</th>
+            <th style="padding:10px 12px;font-size:10px;letter-spacing:0.1em;color:var(--text3);border-bottom:1px solid var(--border);font-weight:400;text-align:left">날짜</th>
+            <th style="padding:10px 12px;font-size:10px;letter-spacing:0.1em;color:var(--text3);border-bottom:1px solid var(--border);font-weight:400;text-align:left">고객명</th>
+            <th style="padding:10px 12px;font-size:10px;letter-spacing:0.1em;color:var(--text3);border-bottom:1px solid var(--border);font-weight:400;text-align:left">연락처</th>
+            <th style="padding:10px 12px;font-size:10px;letter-spacing:0.1em;color:var(--text3);border-bottom:1px solid var(--border);font-weight:400;text-align:left">내역</th>
+            <th style="padding:10px 12px;font-size:10px;letter-spacing:0.1em;color:var(--text3);border-bottom:1px solid var(--border);font-weight:400;text-align:right">판매금액</th>
+            <th style="padding:10px 12px;font-size:10px;letter-spacing:0.1em;color:var(--text3);border-bottom:1px solid var(--border);font-weight:400;text-align:left">결제</th>
+            <th style="padding:10px 12px;font-size:10px;letter-spacing:0.1em;color:var(--text3);border-bottom:1px solid var(--border);font-weight:400;text-align:right">결제합계</th>
+            <th style="padding:10px 12px;font-size:10px;letter-spacing:0.1em;color:var(--text3);border-bottom:1px solid var(--border);font-weight:400;text-align:right">차액</th>
+            <th style="padding:10px 12px;font-size:10px;letter-spacing:0.1em;color:var(--text3);border-bottom:1px solid var(--border);font-weight:400;text-align:right">손익</th>
+            <th style="padding:10px 12px;font-size:10px;letter-spacing:0.1em;color:var(--text3);border-bottom:1px solid var(--border);font-weight:400;text-align:center">상태</th>
+            <th style="padding:10px 12px;font-size:10px;letter-spacing:0.1em;color:var(--text3);border-bottom:1px solid var(--border);font-weight:400;text-align:center">관리</th>
+          </tr>
+        </thead>
+        <tbody id="cd-tbody"></tbody>
+      </table>
+      <div class="table-footer" id="cd-footer"></div>
+    </div>
+  </div>
+
+
     <div id="panel-extra-wrap" style="display:none">
   <!-- 누적재고 -->
   <div id="panel-inv-cumulative" class="panel">
@@ -3039,6 +3080,130 @@
 </div>
 
 
+
+<!-- 고객거래 등록/수정 모달 -->
+<div id="modal-cd" class="modal-overlay" style="display:none" onclick="event.target===this&&closeCdModal()">
+  <div class="modal" style="width:600px;max-height:92vh;overflow-y:auto" onclick="event.stopPropagation()">
+    <div class="modal-header">
+      <div class="modal-title" id="cd-modal-title">거래 등록</div>
+      <button class="modal-close" onclick="closeCdModal()">×</button>
+    </div>
+    <div style="padding:20px 24px;display:flex;flex-direction:column;gap:14px">
+
+      <!-- 기본정보 -->
+      <div style="font-size:12px;font-weight:600;color:var(--text2);border-bottom:1px solid var(--border);padding-bottom:6px">고객 정보</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+        <div>
+          <div style="font-size:11px;color:var(--text3);margin-bottom:4px">날짜 *</div>
+          <input type="date" id="cd-date" style="width:100%;border:1px solid #d4a96a;border-radius:4px;padding:7px 10px;font-size:13px;font-family:inherit">
+        </div>
+        <div>
+          <div style="font-size:11px;color:var(--text3);margin-bottom:4px">거래번호</div>
+          <div id="cd-dealnum" style="border:1px solid #e8d5b8;border-radius:4px;padding:7px 10px;font-size:13px;background:#fffbf4;color:var(--gold);font-weight:600">자동생성</div>
+        </div>
+        <div>
+          <div style="font-size:11px;color:var(--text3);margin-bottom:4px">고객명 *</div>
+          <input type="text" id="cd-name" placeholder="홍길동" style="width:100%;border:1px solid #d4a96a;border-radius:4px;padding:7px 10px;font-size:13px;font-family:inherit">
+        </div>
+        <div>
+          <div style="font-size:11px;color:var(--text3);margin-bottom:4px">연락처</div>
+          <input type="tel" id="cd-phone" placeholder="010-0000-0000" style="width:100%;border:1px solid #d4a96a;border-radius:4px;padding:7px 10px;font-size:13px;font-family:inherit">
+        </div>
+      </div>
+
+      <!-- 거래 내역 -->
+      <div style="font-size:12px;font-weight:600;color:var(--text2);border-bottom:1px solid var(--border);padding-bottom:6px;display:flex;justify-content:space-between;align-items:center">
+        거래 내역
+        <button type="button" onclick="addCdItem()" style="font-size:11px;padding:3px 10px;border:1px solid var(--gold);border-radius:4px;background:#fff;color:var(--gold);cursor:pointer">+ 항목 추가</button>
+      </div>
+      <div id="cd-items" style="display:flex;flex-direction:column;gap:8px"></div>
+      <div style="display:flex;justify-content:flex-end;gap:16px;font-size:13px;padding:8px 0;border-top:1px solid var(--border)">
+        <span style="color:var(--text3)">판매 합계</span>
+        <span style="font-weight:700;color:var(--gold)" id="cd-total-sale">0원</span>
+      </div>
+
+      <!-- 결제 -->
+      <div style="font-size:12px;font-weight:600;color:var(--text2);border-bottom:1px solid var(--border);padding-bottom:6px">결제 내역</div>
+      <div style="display:grid;grid-template-columns:80px 1fr 1fr;gap:8px;align-items:center">
+        <div style="font-size:13px;font-weight:600;color:#1a7a40">💵 현금</div>
+        <div>
+          <div style="font-size:10px;color:var(--text3);margin-bottom:3px">금액 (원)</div>
+          <input type="number" id="cd-pay-cash" placeholder="0" oninput="cdCalcTotal()" style="width:100%;border:1px solid #d4a96a;border-radius:4px;padding:6px 10px;font-size:13px;font-family:inherit">
+        </div>
+        <div>
+          <div style="font-size:10px;color:var(--text3);margin-bottom:3px">메모</div>
+          <input type="text" id="cd-pay-cash-memo" placeholder="비고" style="width:100%;border:1px solid #d4a96a;border-radius:4px;padding:6px 10px;font-size:13px;font-family:inherit">
+        </div>
+      </div>
+      <div style="display:grid;grid-template-columns:80px 1fr 1fr;gap:8px;align-items:center">
+        <div style="font-size:13px;font-weight:600;color:#2471a3">🏦 계좌</div>
+        <div>
+          <div style="font-size:10px;color:var(--text3);margin-bottom:3px">금액 (원)</div>
+          <input type="number" id="cd-pay-bank" placeholder="0" oninput="cdCalcTotal()" style="width:100%;border:1px solid #d4a96a;border-radius:4px;padding:6px 10px;font-size:13px;font-family:inherit">
+        </div>
+        <div>
+          <div style="font-size:10px;color:var(--text3);margin-bottom:3px">계좌/메모</div>
+          <input type="text" id="cd-pay-bank-memo" placeholder="국민은행 등" style="width:100%;border:1px solid #d4a96a;border-radius:4px;padding:6px 10px;font-size:13px;font-family:inherit">
+        </div>
+      </div>
+      <div style="display:grid;grid-template-columns:80px 1fr 1fr;gap:8px;align-items:center">
+        <div style="font-size:13px;font-weight:600;color:#8e44ad">💳 카드</div>
+        <div>
+          <div style="font-size:10px;color:var(--text3);margin-bottom:3px">금액 (원)</div>
+          <input type="number" id="cd-pay-card" placeholder="0" oninput="cdCalcTotal()" style="width:100%;border:1px solid #d4a96a;border-radius:4px;padding:6px 10px;font-size:13px;font-family:inherit">
+        </div>
+        <div>
+          <div style="font-size:10px;color:var(--text3);margin-bottom:3px">메모</div>
+          <input type="text" id="cd-pay-card-memo" placeholder="카드사 등" style="width:100%;border:1px solid #d4a96a;border-radius:4px;padding:6px 10px;font-size:13px;font-family:inherit">
+        </div>
+      </div>
+      <div style="display:grid;grid-template-columns:80px 1fr 1fr;gap:8px;align-items:center">
+        <div style="font-size:13px;font-weight:600;color:#b07a00">🥇 금</div>
+        <div>
+          <div style="font-size:10px;color:var(--text3);margin-bottom:3px">금액 (원)</div>
+          <input type="number" id="cd-pay-gold" placeholder="0" oninput="cdCalcTotal()" style="width:100%;border:1px solid #d4a96a;border-radius:4px;padding:6px 10px;font-size:13px;font-family:inherit">
+        </div>
+        <div>
+          <div style="font-size:10px;color:var(--text3);margin-bottom:3px">중량/메모</div>
+          <input type="text" id="cd-pay-gold-memo" placeholder="고금 3.5g 등" style="width:100%;border:1px solid #d4a96a;border-radius:4px;padding:6px 10px;font-size:13px;font-family:inherit">
+        </div>
+      </div>
+
+      <!-- 합계 요약 -->
+      <div style="background:#f8f8f8;border-radius:6px;padding:12px 16px;display:flex;gap:20px;align-items:center;flex-wrap:wrap">
+        <div><span style="font-size:11px;color:var(--text3)">결제 합계</span><div style="font-size:15px;font-weight:700;color:var(--gold)" id="cd-sum-paid">0원</div></div>
+        <div><span style="font-size:11px;color:var(--text3)">판매 합계</span><div style="font-size:15px;font-weight:700" id="cd-sum-sale">0원</div></div>
+        <div><span style="font-size:11px;color:var(--text3)">차액</span><div style="font-size:15px;font-weight:700" id="cd-sum-diff">—</div></div>
+        <div style="margin-left:auto"><div style="font-size:14px;font-weight:700" id="cd-sum-status">—</div></div>
+      </div>
+
+      <!-- 손익 -->
+      <div style="font-size:12px;font-weight:600;color:var(--text2);border-bottom:1px solid var(--border);padding-bottom:6px">손익</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+        <div>
+          <div style="font-size:11px;color:var(--text3);margin-bottom:4px">손익금액 (원)</div>
+          <input type="number" id="cd-profit" placeholder="직접 입력" style="width:100%;border:1px solid #d4a96a;border-radius:4px;padding:7px 10px;font-size:13px;font-family:inherit">
+        </div>
+        <div>
+          <div style="font-size:11px;color:var(--text3);margin-bottom:4px">손익 메모</div>
+          <input type="text" id="cd-profit-memo" placeholder="원가, 마진 등" style="width:100%;border:1px solid #d4a96a;border-radius:4px;padding:7px 10px;font-size:13px;font-family:inherit">
+        </div>
+      </div>
+
+      <!-- 비고 -->
+      <div>
+        <div style="font-size:11px;color:var(--text3);margin-bottom:4px">비고</div>
+        <input type="text" id="cd-memo" placeholder="특이사항 등" style="width:100%;border:1px solid #d4a96a;border-radius:4px;padding:7px 10px;font-size:13px;font-family:inherit">
+      </div>
+
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-outline" onclick="closeCdModal()">취소</button>
+      <button class="btn btn-gold" onclick="saveCdDeal()">저장</button>
+    </div>
+  </div>
+</div>
+
 <!-- 판매 결제 상세창 -->
 <div id="modal-sale-payment" class="modal-overlay" style="display:none" onclick="event.target===this&&closeSalePaymentModal()">
   <div class="modal" style="width:560px;max-height:92vh;overflow-y:auto" onclick="event.stopPropagation()">
@@ -3312,7 +3477,7 @@ const ORDER_EXTRA_PERMS = { hideMfr: '제조사 숨김' };
 // 기본 관리자 계정 (최초 실행용)
 const DEFAULT_ADMIN = { id:'admin', name:'관리자', pw:'rebirth1234', role:'admin', createdAt: new Date().toISOString().slice(0,10), lastLogin:'' };
 
-let DB = { catalog:[], inventory:[], sales:[], orders:[], rental:[], partners:[], goldprices:[], accounts:[], permissions:{}, returned:[], auditState:null, cashLedger:[], goldLedger:[], settlements:[], goldPurchases:[] };
+let DB = { catalog:[], inventory:[], sales:[], orders:[], rental:[], partners:[], goldprices:[], accounts:[], permissions:{}, returned:[], auditState:null, cashLedger:[], goldLedger:[], settlements:[], goldPurchases:[], customerDeals:[] };
 let currentUser = null; // { id, name, role }
 
 function saveDB() {
@@ -3411,9 +3576,9 @@ function loadDB() {
 }
 
 // ── Navigation ───────────────────────────────────────────────
-const titles = { dashboard:'대시보드', catalog:'카탈로그', inventory:'재고관리', 'inv-cumulative':'누적재고', 'inv-deleted':'삭제재고', 'inv-returned':'반납재고', 'inv-audit':'재고조사', sales:'판매관리', unpaid:'미수현황', orders:'주문관리', rental:'대여관리', partners:'거래처', 'gold-price':'시세관리', accounts:'계정관리', permissions:'권한관리', 'cash-ledger':'현금시재', 'gold-ledger':'금시재', 'gold-purchase':'고금매입', pnl:'손익·자산' };
+const titles = { dashboard:'대시보드', catalog:'카탈로그', inventory:'재고관리', 'inv-cumulative':'누적재고', 'inv-deleted':'삭제재고', 'inv-returned':'반납재고', 'inv-audit':'재고조사', sales:'판매관리', unpaid:'미수현황', orders:'주문관리', rental:'대여관리', partners:'거래처', 'gold-price':'시세관리', accounts:'계정관리', permissions:'권한관리', 'customer-deals':'고객거래', 'cash-ledger':'현금시재', 'gold-ledger':'금시재', 'gold-purchase':'고금매입', pnl:'손익·자산' };
 
-const EXTRA_PANELS = ['inv-cumulative','inv-deleted','inv-returned','inv-audit','unpaid','cash-ledger','gold-ledger','gold-purchase','pnl'];
+const EXTRA_PANELS = ['inv-cumulative','inv-deleted','inv-returned','inv-audit','unpaid','cash-ledger','gold-ledger','gold-purchase','pnl', 'customer-deals'];
 
 function go(page) {
   if ((page==='accounts'||page==='permissions') && currentUser?.role!=='admin') { toast('접근 권한이 없습니다','error'); return; }
@@ -3469,6 +3634,7 @@ function go(page) {
     setPnlThisMonth();
     setPnlMode('month');
   }
+  if (page==='customer-deals') renderCustomerDeals();
 }
 
 // ── Toast ────────────────────────────────────────────────────
@@ -6005,6 +6171,250 @@ function deleteInventory(id) {
   DB.deletedInventory.push(rec);
   DB.inventory = DB.inventory.filter(i=>i.id!==id);
   saveDB(); renderInventory(); toast('삭제됨 (삭제재고에서 복구 가능)');
+}
+
+
+// ══════════════════════════════════════════════════════════════
+// 고객거래 탭
+// ══════════════════════════════════════════════════════════════
+let cdEditId = null;
+
+function cdGenDealNum() {
+  const d = today().replace(/-/g,'').slice(2); // YYMMDD
+  const count = (DB.customerDeals||[]).length + 1;
+  return 'CD' + d + '-' + String(count).padStart(3,'0');
+}
+
+function openCdModal(id) {
+  if (!DB.customerDeals) DB.customerDeals = [];
+  cdEditId = id || null;
+  const deal = id ? DB.customerDeals.find(d=>d.id===id) : null;
+  document.getElementById('cd-modal-title').textContent = deal ? '거래 수정' : '거래 등록';
+  document.getElementById('cd-date').value = deal ? deal.date : today();
+  document.getElementById('cd-dealnum').textContent = deal ? deal.dealNum : cdGenDealNum();
+  document.getElementById('cd-name').value = deal ? deal.customerName : '';
+  document.getElementById('cd-phone').value = deal ? (deal.customerPhone||'') : '';
+  document.getElementById('cd-pay-cash').value = deal ? ((deal.payments||[]).find(p=>p.type==='현금')?.amount||'') : '';
+  document.getElementById('cd-pay-cash-memo').value = deal ? ((deal.payments||[]).find(p=>p.type==='현금')?.memo||'') : '';
+  document.getElementById('cd-pay-bank').value = deal ? ((deal.payments||[]).find(p=>p.type==='계좌')?.amount||'') : '';
+  document.getElementById('cd-pay-bank-memo').value = deal ? ((deal.payments||[]).find(p=>p.type==='계좌')?.memo||'') : '';
+  document.getElementById('cd-pay-card').value = deal ? ((deal.payments||[]).find(p=>p.type==='카드')?.amount||'') : '';
+  document.getElementById('cd-pay-card-memo').value = deal ? ((deal.payments||[]).find(p=>p.type==='카드')?.memo||'') : '';
+  document.getElementById('cd-pay-gold').value = deal ? ((deal.payments||[]).find(p=>p.type==='금')?.amount||'') : '';
+  document.getElementById('cd-pay-gold-memo').value = deal ? ((deal.payments||[]).find(p=>p.type==='금')?.memo||'') : '';
+  document.getElementById('cd-profit').value = deal?.profit != null ? deal.profit : '';
+  document.getElementById('cd-profit-memo').value = deal ? (deal.profitMemo||'') : '';
+  document.getElementById('cd-memo').value = deal ? (deal.memo||'') : '';
+
+  // 항목 렌더
+  const items = document.getElementById('cd-items');
+  items.innerHTML = '';
+  if (deal && deal.items && deal.items.length > 0) {
+    deal.items.forEach(item => addCdItem(item));
+  } else {
+    addCdItem();
+  }
+  cdCalcTotal();
+  document.getElementById('modal-cd').style.display = 'flex';
+}
+
+function closeCdModal() {
+  document.getElementById('modal-cd').style.display = 'none';
+  cdEditId = null;
+}
+
+let cdItemIdx = 0;
+function addCdItem(item) {
+  cdItemIdx++;
+  const idx = cdItemIdx;
+  const div = document.createElement('div');
+  div.dataset.cdIdx = idx;
+  div.style.cssText = 'display:grid;grid-template-columns:2fr 1fr auto;gap:8px;align-items:center';
+  div.innerHTML = `
+    <input type="text" id="cdi-desc-${idx}" placeholder="품목명 (예: 14K 귀걸이, 반지)" value="${item?item.desc||'':''}"
+      style="border:1px solid #d4a96a;border-radius:4px;padding:6px 10px;font-size:13px;font-family:inherit;width:100%">
+    <input type="number" id="cdi-amt-${idx}" placeholder="금액(원)" value="${item?item.amount||'':''}"
+      oninput="cdCalcSaleTotal()"
+      style="border:1px solid #d4a96a;border-radius:4px;padding:6px 10px;font-size:13px;font-family:inherit;width:100%">
+    <button onclick="this.closest('[data-cd-idx]').remove();cdCalcSaleTotal()"
+      style="background:transparent;border:none;color:var(--text3);cursor:pointer;font-size:18px;line-height:1;padding:0 4px">×</button>
+  `;
+  document.getElementById('cd-items').appendChild(div);
+}
+
+function cdCalcSaleTotal() {
+  let total = 0;
+  document.querySelectorAll('#cd-items [data-cd-idx]').forEach(div => {
+    const idx = div.dataset.cdIdx;
+    total += parseFloat(document.getElementById('cdi-amt-'+idx)?.value||0) || 0;
+  });
+  document.getElementById('cd-total-sale').textContent = fmt(total) + '원';
+  document.getElementById('cd-sum-sale').textContent = fmt(total) + '원';
+  cdCalcTotal();
+  return total;
+}
+
+function cdCalcTotal() {
+  const saleTotal = cdCalcSaleTotal ? (() => {
+    let t=0;
+    document.querySelectorAll('#cd-items [data-cd-idx]').forEach(div=>{
+      const idx=div.dataset.cdIdx;
+      t+=parseFloat(document.getElementById('cdi-amt-'+idx)?.value||0)||0;
+    });
+    return t;
+  })() : 0;
+
+  const cash = parseFloat(document.getElementById('cd-pay-cash').value)||0;
+  const bank = parseFloat(document.getElementById('cd-pay-bank').value)||0;
+  const card = parseFloat(document.getElementById('cd-pay-card').value)||0;
+  const gold = parseFloat(document.getElementById('cd-pay-gold').value)||0;
+  const paid = cash + bank + card + gold;
+  const diff = paid - saleTotal;
+
+  document.getElementById('cd-sum-paid').textContent = fmt(paid) + '원';
+  document.getElementById('cd-sum-sale').textContent = fmt(saleTotal) + '원';
+  document.getElementById('cd-sum-diff').textContent = (diff>=0?'+':'') + fmt(diff) + '원';
+  document.getElementById('cd-sum-diff').style.color = diff<0?'var(--danger)':diff>0?'var(--success)':'var(--text)';
+
+  let status, color;
+  if (paid===0) { status='🔴 미결제'; color='#c0392b'; }
+  else if (paid>=saleTotal && saleTotal>0) { status='✅ 완료'; color='#1a7a40'; }
+  else { status='⚠️ 부분결제'; color='#d4770a'; }
+  document.getElementById('cd-sum-status').textContent = status;
+  document.getElementById('cd-sum-status').style.color = color;
+}
+
+function saveCdDeal() {
+  const name = document.getElementById('cd-name').value.trim();
+  if (!name) { toast('고객명을 입력해주세요','error'); return; }
+
+  // 항목 수집
+  const items = [];
+  let saleTotal = 0;
+  document.querySelectorAll('#cd-items [data-cd-idx]').forEach(div => {
+    const idx = div.dataset.cdIdx;
+    const desc = document.getElementById('cdi-desc-'+idx)?.value?.trim()||'';
+    const amt = parseFloat(document.getElementById('cdi-amt-'+idx)?.value)||0;
+    if (desc || amt) { items.push({desc, amount:amt}); saleTotal += amt; }
+  });
+
+  // 결제 수집
+  const payments = [];
+  const cashAmt = parseFloat(document.getElementById('cd-pay-cash').value)||0;
+  const bankAmt = parseFloat(document.getElementById('cd-pay-bank').value)||0;
+  const cardAmt = parseFloat(document.getElementById('cd-pay-card').value)||0;
+  const goldAmt = parseFloat(document.getElementById('cd-pay-gold').value)||0;
+  if (cashAmt>0) payments.push({type:'현금', amount:cashAmt, memo:document.getElementById('cd-pay-cash-memo').value});
+  if (bankAmt>0) payments.push({type:'계좌', amount:bankAmt, memo:document.getElementById('cd-pay-bank-memo').value});
+  if (cardAmt>0) payments.push({type:'카드', amount:cardAmt, memo:document.getElementById('cd-pay-card-memo').value});
+  if (goldAmt>0) payments.push({type:'금', amount:goldAmt, memo:document.getElementById('cd-pay-gold-memo').value});
+  const paid = cashAmt+bankAmt+cardAmt+goldAmt;
+
+  let payStatus = 'unpaid';
+  if (paid>0 && paid<saleTotal) payStatus='partial';
+  if (paid>=saleTotal && saleTotal>0) payStatus='paid';
+
+  const dealNum = document.getElementById('cd-dealnum').textContent;
+  const profit = document.getElementById('cd-profit').value!=='' ? parseFloat(document.getElementById('cd-profit').value) : null;
+
+  const deal = {
+    id: cdEditId || uid(),
+    dealNum,
+    date: document.getElementById('cd-date').value || today(),
+    customerName: name,
+    customerPhone: document.getElementById('cd-phone').value.trim(),
+    items, saleTotal, payments, paid, payStatus,
+    profit,
+    profitMemo: document.getElementById('cd-profit-memo').value.trim(),
+    memo: document.getElementById('cd-memo').value.trim(),
+    createdAt: nowStr(),
+    createdBy: currentUser?.id, createdByName: currentUser?.name
+  };
+
+  if (!DB.customerDeals) DB.customerDeals = [];
+  if (cdEditId) {
+    const idx = DB.customerDeals.findIndex(d=>d.id===cdEditId);
+    if (idx>=0) DB.customerDeals[idx] = deal;
+  } else {
+    DB.customerDeals.push(deal);
+  }
+
+  // 현금시재 자동 연동
+  DB.cashLedger = DB.cashLedger.filter(r=>r.cdId!==deal.id);
+  if (cashAmt>0) {
+    DB.cashLedger.push({
+      id: Date.now()+1, date:deal.date, type:'in',
+      desc:'고객수금 — '+name, amount:cashAmt, cat:'판매대금',
+      memo:document.getElementById('cd-pay-cash-memo').value, cdId:deal.id,
+      createdAt:nowStr(), createdBy:currentUser?.id, createdByName:currentUser?.name
+    });
+  }
+
+  saveDB();
+  closeCdModal();
+  renderCustomerDeals();
+  if (typeof renderCashLedger==='function') renderCashLedger();
+  toast('저장되었습니다');
+}
+
+function deleteCdDeal(id) {
+  if (!confirm('이 거래를 삭제하시겠습니까?')) return;
+  DB.cashLedger = DB.cashLedger.filter(r=>r.cdId!==id);
+  DB.customerDeals = DB.customerDeals.filter(d=>d.id!==id);
+  saveDB();
+  renderCustomerDeals();
+  toast('삭제되었습니다');
+}
+
+function renderCustomerDeals() {
+  if (!DB.customerDeals) DB.customerDeals = [];
+  const search = document.getElementById('cd-search')?.value?.toLowerCase()||'';
+  const statusF = document.getElementById('cd-status-filter')?.value||'';
+
+  let data = [...DB.customerDeals].sort((a,b)=>b.date.localeCompare(a.date)||(b.createdAt||'').localeCompare(a.createdAt||''));
+  if (search) data = data.filter(d=>(d.customerName||'').toLowerCase().includes(search)||(d.customerPhone||'').includes(search));
+  if (statusF) data = data.filter(d=>d.payStatus===statusF);
+
+  const tbody = document.getElementById('cd-tbody');
+  if (!data.length) {
+    tbody.innerHTML = '<tr><td colspan="12" style="text-align:center;padding:32px;color:var(--text3)">거래 내역이 없습니다</td></tr>';
+    document.getElementById('cd-footer').textContent='';
+    return;
+  }
+
+  const payBadge = s => {
+    if (s==='paid') return '<span style="display:inline-block;padding:2px 8px;border-radius:2px;font-size:10px;font-weight:600;background:rgba(39,174,96,0.12);color:#1a7a40">✅ 완료</span>';
+    if (s==='partial') return '<span style="display:inline-block;padding:2px 8px;border-radius:2px;font-size:10px;font-weight:600;background:rgba(212,119,10,0.12);color:#d4770a">⚠️ 부분</span>';
+    return '<span style="display:inline-block;padding:2px 8px;border-radius:2px;font-size:10px;font-weight:600;background:rgba(192,57,43,0.1);color:#c0392b">🔴 미결제</span>';
+  };
+
+  tbody.innerHTML = data.map(d => {
+    const payStr = (d.payments||[]).map(p=>`${p.type} ${fmt(p.amount)}원`).join(' / ') || '—';
+    const itemStr = (d.items||[]).map(i=>i.desc).filter(Boolean).join(', ') || d.memo || '—';
+    const diff = (d.paid||0) - (d.saleTotal||0);
+    return `<tr style="border-bottom:1px solid var(--border)">
+      <td style="padding:10px 12px;font-size:11px;color:var(--gold);font-weight:600">${d.dealNum||'—'}</td>
+      <td style="padding:10px 12px;font-size:12px;color:var(--text3)">${d.date||'—'}</td>
+      <td style="padding:10px 12px;font-size:13px;font-weight:600">${d.customerName||'—'}</td>
+      <td style="padding:10px 12px;font-size:12px;color:var(--text3)">${d.customerPhone||'—'}</td>
+      <td style="padding:10px 12px;font-size:12px;color:var(--text2);max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${itemStr}">${itemStr}</td>
+      <td style="padding:10px 12px;font-size:13px;font-weight:600;text-align:right;color:var(--gold)">${fmt(d.saleTotal||0)}원</td>
+      <td style="padding:10px 12px;font-size:11px;color:var(--text2)">${payStr}</td>
+      <td style="padding:10px 12px;font-size:13px;font-weight:600;text-align:right">${fmt(d.paid||0)}원</td>
+      <td style="padding:10px 12px;font-size:12px;text-align:right;color:${diff<0?'var(--danger)':diff>0?'var(--success)':'var(--text3)'}">${diff===0?'—':(diff>0?'+':'')+fmt(diff)+'원'}</td>
+      <td style="padding:10px 12px;font-size:12px;text-align:right;color:var(--success);font-weight:600">${d.profit!=null?fmt(d.profit)+'원':'—'}</td>
+      <td style="padding:10px 12px">${payBadge(d.payStatus)}</td>
+      <td style="padding:10px 12px;white-space:nowrap">
+        <a class="action-link" style="font-size:11px" onclick="openCdModal('${d.id}')">수정</a>
+        <a class="action-link" style="font-size:11px;color:var(--danger)" onclick="deleteCdDeal('${d.id}')">삭제</a>
+      </td>
+    </tr>`;
+  }).join('');
+
+  const totalSale = data.reduce((t,d)=>t+(d.saleTotal||0),0);
+  const totalPaid = data.reduce((t,d)=>t+(d.paid||0),0);
+  const totalProfit = data.filter(d=>d.profit!=null).reduce((t,d)=>t+(d.profit||0),0);
+  document.getElementById('cd-footer').innerHTML = `<span style="font-size:12px;color:var(--text2)">${data.length}건 &nbsp;|&nbsp; 판매합계 <b>${fmt(totalSale)}</b>원 &nbsp;|&nbsp; 결제합계 <b>${fmt(totalPaid)}</b>원 &nbsp;|&nbsp; 손익합계 <b style="color:var(--success)">${fmt(totalProfit)}</b>원</span>`;
 }
 
 // ══════════════════════════════════════════════════════════════
