@@ -166,33 +166,6 @@
     }
   };
 
-  // Firebase Storage에 사진 업로드 (base64 → Storage URL)
-  const STORAGE_BUCKET = 'rebirth-gold.firebasestorage.app';
-  window._fbUploadPhoto = async function(base64DataUrl, fileName) {
-    try {
-      const res = await fetch(base64DataUrl);
-      const blob = await res.blob();
-      const mimeType = blob.type || 'image/jpeg';
-      const path = `catalog-photos/${Date.now()}_${fileName || 'photo.jpg'}`;
-      const encodedPath = encodeURIComponent(path);
-      const uploadUrl = `https://firebasestorage.googleapis.com/v0/b/${STORAGE_BUCKET}/o?uploadType=media&name=${encodedPath}&key=${API_KEY}`;
-      const uploadRes = await fetch(uploadUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': mimeType },
-        body: blob
-      });
-      if (!uploadRes.ok) {
-        console.error('Storage upload failed:', await uploadRes.text());
-        return null;
-      }
-      const downloadUrl = `https://firebasestorage.googleapis.com/v0/b/${STORAGE_BUCKET}/o/${encodedPath}?alt=media&key=${API_KEY}`;
-      return downloadUrl;
-    } catch(e) {
-      console.error('Storage upload error:', e);
-      return null;
-    }
-  };
-
   window._fbReady = true;
   window._fbInit = async function() { return true; }; // API Key 방식은 Auth 불필요
   console.log('✅ Firebase REST API v3 준비됨 (컬렉션 분산 + API Key)');
@@ -1853,31 +1826,42 @@
           <div style="font-size:11px;color:var(--text3);margin-bottom:4px">내용 *</div>
           <input id="cl-m-desc" type="text" placeholder="예) 판매대금, 공임비 지출..." style="width:100%;border:1px solid #d4a96a;border-radius:4px;padding:7px 10px;font-size:13px;font-family:inherit">
         </div>
-        <div>
-          <div style="font-size:11px;color:var(--text3);margin-bottom:4px">금액 (원)</div>
-          <input id="cl-m-amount" type="number" placeholder="0" style="width:100%;border:1px solid #d4a96a;border-radius:4px;padding:7px 10px;font-size:13px;font-family:inherit">
+        <!-- 권종별 수량 -->
+        <div style="grid-column:1/-1;font-size:12px;font-weight:600;color:var(--text2);padding-top:4px;border-top:1px solid #ede0cc;display:flex;align-items:center;justify-content:space-between">
+          권종별 수량
+          <span style="font-size:10px;color:var(--text3);font-weight:400">거스름돈 받은 권종은 음수(-) 입력</span>
         </div>
-        <div></div>
-        <div style="grid-column:1/-1;font-size:12px;font-weight:600;color:var(--text2);padding-top:4px;border-top:1px solid #ede0cc">권종별 수량 (선택)</div>
         <div>
           <div style="font-size:11px;color:var(--text3);margin-bottom:4px">5만원권</div>
-          <input id="cl-m-w50" type="number" placeholder="0" style="width:100%;border:1px solid #d4a96a;border-radius:4px;padding:7px 10px;font-size:13px;font-family:inherit">
+          <input id="cl-m-w50" type="number" placeholder="0" oninput="clUpdateWTotal()" style="width:100%;border:1px solid #d4a96a;border-radius:4px;padding:7px 10px;font-size:13px;font-family:inherit">
         </div>
         <div>
           <div style="font-size:11px;color:var(--text3);margin-bottom:4px">1만원권</div>
-          <input id="cl-m-w10" type="number" placeholder="0" style="width:100%;border:1px solid #d4a96a;border-radius:4px;padding:7px 10px;font-size:13px;font-family:inherit">
+          <input id="cl-m-w10" type="number" placeholder="0" oninput="clUpdateWTotal()" style="width:100%;border:1px solid #d4a96a;border-radius:4px;padding:7px 10px;font-size:13px;font-family:inherit">
         </div>
         <div>
           <div style="font-size:11px;color:var(--text3);margin-bottom:4px">5천원권</div>
-          <input id="cl-m-w5" type="number" placeholder="0" style="width:100%;border:1px solid #d4a96a;border-radius:4px;padding:7px 10px;font-size:13px;font-family:inherit">
+          <input id="cl-m-w5" type="number" placeholder="0" oninput="clUpdateWTotal()" style="width:100%;border:1px solid #d4a96a;border-radius:4px;padding:7px 10px;font-size:13px;font-family:inherit">
         </div>
         <div>
           <div style="font-size:11px;color:var(--text3);margin-bottom:4px">1천원권</div>
-          <input id="cl-m-w1" type="number" placeholder="0" style="width:100%;border:1px solid #d4a96a;border-radius:4px;padding:7px 10px;font-size:13px;font-family:inherit">
+          <input id="cl-m-w1" type="number" placeholder="0" oninput="clUpdateWTotal()" style="width:100%;border:1px solid #d4a96a;border-radius:4px;padding:7px 10px;font-size:13px;font-family:inherit">
         </div>
         <div>
           <div style="font-size:11px;color:var(--text3);margin-bottom:4px">백원</div>
-          <input id="cl-m-w01" type="number" placeholder="0" style="width:100%;border:1px solid #d4a96a;border-radius:4px;padding:7px 10px;font-size:13px;font-family:inherit">
+          <input id="cl-m-w01" type="number" placeholder="0" oninput="clUpdateWTotal()" style="width:100%;border:1px solid #d4a96a;border-radius:4px;padding:7px 10px;font-size:13px;font-family:inherit">
+        </div>
+        <div>
+          <div style="font-size:11px;color:var(--text3);margin-bottom:4px">권종 합계</div>
+          <div id="cl-m-wtotal" style="border:1px solid #e8d5b8;border-radius:4px;padding:7px 10px;font-size:14px;font-weight:700;color:var(--gold);background:#fffbf4;min-height:36px">0원</div>
+        </div>
+        <!-- 입금/출금 금액 -->
+        <div style="grid-column:1/-1;font-size:12px;font-weight:600;color:var(--text2);padding-top:4px;border-top:1px solid #ede0cc">
+          실제 금액 <span style="font-size:10px;color:var(--text3);font-weight:400">권종 합계와 다를 경우 직접 입력 (거스름돈 제외 순지급액)</span>
+        </div>
+        <div>
+          <div style="font-size:11px;color:var(--text3);margin-bottom:4px">금액 (원) *</div>
+          <input id="cl-m-amount" type="number" placeholder="권종 입력 시 자동계산" style="width:100%;border:1px solid #d4a96a;border-radius:4px;padding:7px 10px;font-size:13px;font-family:inherit">
         </div>
         <div>
           <div style="font-size:11px;color:var(--text3);margin-bottom:4px">비고</div>
@@ -3216,18 +3200,9 @@ let currentUser = null; // { id, name, role }
 function saveDB() {
   // localStorage 즉시 저장 (빠른 응답)
   try { localStorage.setItem('rg-erp', JSON.stringify(DB)); } catch(e) {}
-  // Firebase 클라우드 저장 (비동기) - 카탈로그 사진(base64)은 제외
+  // Firebase 클라우드 저장 (비동기)
   if (window._fbReady && window._fbSave) {
-    const dbForCloud = {
-      ...DB,
-      catalog: (DB.catalog || []).map(c => {
-        const { photo, ...rest } = c;
-        // base64 이미지는 제외, URL은 유지
-        const isBase64 = typeof photo === 'string' && photo.startsWith('data:');
-        return isBase64 ? rest : { ...rest, photo };
-      })
-    };
-    window._fbSave(dbForCloud).then(ok => {
+    window._fbSave(DB).then(ok => {
       const el = document.getElementById('fb-sync-status');
       if (el) {
         if (ok) {
@@ -4189,12 +4164,6 @@ function loadPhotoFromUrl() {
 
 function previewPhoto(input) {
   if (!input.files || !input.files[0]) return;
-  const file = input.files[0];
-  if (file.size > 1 * 1024 * 1024) {
-    toast('⚠ 사진 용량이 1MB를 초과합니다. 1MB 이하 파일을 선택해주세요.', 'error');
-    input.value = '';
-    return;
-  }
   const reader = new FileReader();
   reader.onload = e => {
     currentPhotoData = e.target.result;
@@ -4205,7 +4174,7 @@ function previewPhoto(input) {
     const lbl = document.getElementById('photo-source-label');
     if (lbl) lbl.textContent = '📁 파일 업로드됨';
   };
-  reader.readAsDataURL(file);
+  reader.readAsDataURL(input.files[0]);
 }
 
 function clearPhoto() {
@@ -4308,7 +4277,7 @@ async function importCatalogJSON(input) {
   input.value = '';
 }
 
-async function saveCatalog() {
+function saveCatalog() {
   if (!can('catalog','create') && currentUser?.role!=='admin') { toast('등록 권한이 없습니다','error'); return; }
   const name = document.getElementById('c-name').value.trim();
   if (!name) { toast('모델명을 입력해주세요','error'); return; }
@@ -4332,22 +4301,6 @@ async function saveCatalog() {
     return;
   }
 
-  // ── 사진 처리: base64면 Storage에 업로드 ──────────────────────
-  let photoValue = currentPhotoData || null;
-  const isBase64 = typeof photoValue === 'string' && photoValue.startsWith('data:');
-  if (isBase64 && window._fbUploadPhoto) {
-    toast('📸 사진 업로드 중...', 'info');
-    const fileInput = document.getElementById('c-photo');
-    const fileName = fileInput?.files?.[0]?.name || 'photo.jpg';
-    const uploadedUrl = await window._fbUploadPhoto(photoValue, fileName);
-    if (uploadedUrl) {
-      photoValue = uploadedUrl;
-    } else {
-      toast('⚠ 사진 업로드 실패, 사진 없이 저장합니다', 'error');
-      photoValue = null;
-    }
-  }
-
   const formData = {
     name, mfr,
     cat:    document.getElementById('c-cat').value,
@@ -4356,7 +4309,7 @@ async function saveCatalog() {
     weight: document.getElementById('c-weight').value,
     labor:  document.getElementById('c-labor').value,
     memo:   document.getElementById('c-memo').value,
-    photo:  photoValue,
+    photo:  currentPhotoData || null,
   };
 
   if (editingId) {
@@ -5417,7 +5370,12 @@ function renderSales(filtered) {
           <td style="color:#8a6500;font-weight:700">${st.payLabor > 0 ? fmt(st.payLabor) : '—'}</td>
           <td><span style="display:inline-block;padding:2px 8px;border-radius:2px;font-size:10px;font-weight:600;background:rgba(212,184,0,0.2);color:#8a6500">${st.payMethod||'결제'}</span></td>
           <td style="color:#1a6a1a;font-size:11px;font-weight:600">✔ 결제완료</td>
-          <td style="font-size:11px;color:#8a6500">${st.memo||''}</td>
+          <td style="font-size:11px;color:#8a6500">${st.memo||''}
+            <div style="display:flex;gap:4px;margin-top:4px">
+              <button onclick="openEditSettleModal('${st.id}')" style="padding:2px 7px;font-size:10px;border:1px solid #d4a017;border-radius:3px;background:#fffde6;color:#8a6500;cursor:pointer">✏ 수정</button>
+              <button onclick="deleteSettlement('${st.id}')" style="padding:2px 7px;font-size:10px;border:1px solid #e74c3c;border-radius:3px;background:#fff5f5;color:#c0392b;cursor:pointer">🗑 삭제</button>
+            </div>
+          </td>
         </tr>`;
       });
     }
@@ -7216,15 +7174,20 @@ function renderCashLedger() {
   let rows = [...DB.cashLedger].sort((a,b) => { const d=b.date.localeCompare(a.date); return d!==0?d:(b.id-a.id); });
   if (dateFilter) rows = rows.filter(r => r.date === dateFilter);
 
-  // 잔액 누적 계산
-  let balance = 0;
-  const allSorted = [...DB.cashLedger].sort((a,b) => b.date.localeCompare(a.date) || b.id - a.id);
+  // 잔액 누적 계산 (과거→현재, 같은 날짜 내 시작시재 최우선)
+  const allSorted = [...DB.cashLedger].sort((a,b) => {
+    const dateDiff = a.date.localeCompare(b.date); // 과거→현재
+    if (dateDiff !== 0) return dateDiff;
+    if (a.type === 'start' && b.type !== 'start') return -1; // 시작시재 맨 앞
+    if (b.type === 'start' && a.type !== 'start') return  1;
+    return a.id - b.id; // 나머지는 등록 순
+  });
   const balMap = {};
   let runBal = 0;
   for (const r of allSorted) {
-    if (r.type === 'start') runBal = r.amount || 0;
-    else if (r.type === 'in')  runBal += r.amount || 0;
-    else if (r.type === 'out') runBal -= r.amount || 0;
+    if (r.type === 'start') runBal = Number(r.amount) || 0;
+    else if (r.type === 'in')  runBal += Number(r.amount) || 0;
+    else if (r.type === 'out') runBal -= Number(r.amount) || 0;
     balMap[r.id] = runBal;
   }
 
@@ -7273,7 +7236,10 @@ function renderCashLedger() {
         <td style="font-size:12px;font-weight:600">${r.w01||''}</td>
         <td style="font-weight:700;color:#d4770a">${fmt(r.amount)}</td>
         <td style="font-weight:700;color:#d4770a">${fmt(bal)}</td>
-        <td style="font-size:11px;color:var(--text3)">${r.memo||''}</td>
+        <td style="font-size:11px;color:var(--text3)">
+          ${r.memo||''}
+          ${r.diff != null && r.diff !== 0 ? `<div style="color:${r.diff>0?'var(--success)':'var(--danger)'};font-weight:600;margin-top:2px">실사차액 ${r.diff>0?'+':''}${fmt(r.diff)}원</div>` : ''}
+        </td>
         <td><span style="font-size:10px;color:#d4770a;font-weight:600">마감</span></td>
       </tr>`;
     }
@@ -7291,12 +7257,17 @@ function renderCashLedger() {
       <td style="font-size:12px">${r.date}</td>
       <td style="text-align:left;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${r.desc||''}">${r.desc||''}</td>
       ${amtCell}
-      <td style="font-size:12px">${r.w50||''}</td>
-      <td style="font-size:12px">${r.w10||''}</td>
-      <td style="font-size:12px">${r.w5||''}</td>
-      <td style="font-size:12px">${r.w1||''}</td>
-      <td style="font-size:12px">${r.w01||''}</td>
-      <td style="font-weight:600">${fmt(r.amount)}</td>
+      <td style="font-size:12px;color:${(r.w50||0)<0?'var(--success)':''}">${r.w50||''}</td>
+      <td style="font-size:12px;color:${(r.w10||0)<0?'var(--success)':''}">${r.w10||''}</td>
+      <td style="font-size:12px;color:${(r.w5||0)<0?'var(--success)':''}">${r.w5||''}</td>
+      <td style="font-size:12px;color:${(r.w1||0)<0?'var(--success)':''}">${r.w1||''}</td>
+      <td style="font-size:12px;color:${(r.w01||0)<0?'var(--success)':''}">${r.w01||''}</td>
+      <td style="font-weight:600">${(()=>{
+        const wt=(r.w50||0)*50000+(r.w10||0)*10000+(r.w5||0)*5000+(r.w1||0)*1000+(r.w01||0)*100;
+        const diff = Math.abs(wt) - (r.amount||0);
+        if(wt===0) return fmt(r.amount);
+        return fmt(wt) + (diff!==0?'<span style="font-size:10px;color:var(--text3)"> (실 '+fmt(r.amount)+')</span>':'');
+      })()}</td>
       <td style="font-weight:600;color:${bal<0?'var(--danger)':'var(--text)'}">${fmt(bal)}</td>
       <td style="font-size:11px;color:var(--text3)">${r.memo||''}</td>
       <td>${delBtn}</td>
@@ -7310,6 +7281,24 @@ function renderCashLedger() {
     <span style="font-size:12px;color:var(--text3)">현재잔액 ${fmt(curBal)}원</span>
   `;
   saveDB();
+}
+
+// 권종 수량 입력 시 실시간 합계 계산 및 금액 자동입력
+function clUpdateWTotal() {
+  const w50  = parseInt(document.getElementById('cl-m-w50').value)  || 0;
+  const w10  = parseInt(document.getElementById('cl-m-w10').value)  || 0;
+  const w5   = parseInt(document.getElementById('cl-m-w5').value)   || 0;
+  const w1   = parseInt(document.getElementById('cl-m-w1').value)   || 0;
+  const w01  = parseInt(document.getElementById('cl-m-w01').value)  || 0;
+  const total = w50*50000 + w10*10000 + w5*5000 + w1*1000 + w01*100;
+  const totalEl = document.getElementById('cl-m-wtotal');
+  if (totalEl) {
+    const color = total < 0 ? 'var(--danger)' : 'var(--gold)';
+    totalEl.style.color = color;
+    totalEl.textContent = fmt(total) + '원';
+  }
+  // 금액란 자동입력 (절댓값)
+  document.getElementById('cl-m-amount').value = total !== 0 ? Math.abs(total) : '';
 }
 
 function openCashModal(id) {
@@ -7337,6 +7326,16 @@ function saveCashEntry() {
   const desc   = document.getElementById('cl-m-desc').value.trim();
   const amount = parseFloat(document.getElementById('cl-m-amount').value) || 0;
   if (!date || !desc) { toast('날짜와 내용을 입력해주세요','error'); return; }
+
+  // 시작시재 없으면 입출금 등록 불가 (수정 시에는 예외)
+  const _editIdCheck = document.getElementById('modal-cash').editId;
+  if ((type === 'in' || type === 'out') && !_editIdCheck) {
+    const hasStart = DB.cashLedger.some(r => r.date === date && r.type === 'start');
+    if (!hasStart) {
+      toast('⚠️ 시작시재를 먼저 등록해주세요 (' + date + ')', 'error');
+      return;
+    }
+  }
 
   const catEl = document.getElementById('cl-m-cat');
   const entry = {
@@ -7619,8 +7618,14 @@ function closeCashDay() {
     return;
   }
 
-  // 해당 날짜까지 누적 잔액
-  const allSorted = [...DB.cashLedger].sort((a,b) => b.date.localeCompare(a.date) || b.id - a.id);
+  // 해당 날짜까지 누적 잔액 (과거→현재, 같은 날 시작시재 우선)
+  const allSorted = [...DB.cashLedger].sort((a,b) => {
+    const dateDiff = a.date.localeCompare(b.date);
+    if (dateDiff !== 0) return dateDiff;
+    if (a.type === 'start' && b.type !== 'start') return -1;
+    if (b.type === 'start' && a.type !== 'start') return  1;
+    return a.id - b.id;
+  });
   let runBal = 0;
   for (const r of allSorted) {
     if (r.date > date) break;
@@ -7631,24 +7636,43 @@ function closeCashDay() {
 
   const totalIn  = dayRows.filter(r => r.type === 'in').reduce((s,r) => s + (Number(r.amount)||0), 0);
   const totalOut = dayRows.filter(r => r.type === 'out').reduce((s,r) => s + (Number(r.amount)||0), 0);
-  // 권종별 잔여 수량: 전체 기록 기준 해당 날짜까지 누적 (입금/시작=+, 출금=-)
+
+  // 권종별 잔여 수량: 시작시재 기준 + 입금 - 출금 (close 제외, start는 리셋)
   let w50=0, w10=0, w5=0, w1=0, w01=0;
   for (const r of allSorted) {
     if (r.date > date) break;
     if (r.type === 'close') continue;
-    const sign = (r.type === 'out') ? -1 : 1;
-    w50 += sign * (Number(r.w50)||0);
-    w10 += sign * (Number(r.w10)||0);
-    w5  += sign * (Number(r.w5) ||0);
-    w1  += sign * (Number(r.w1) ||0);
-    w01 += sign * (Number(r.w01)||0);
+    if (r.type === 'start') {
+      // 시작시재는 초기화(리셋)
+      w50 = Number(r.w50)||0;
+      w10 = Number(r.w10)||0;
+      w5  = Number(r.w5) ||0;
+      w1  = Number(r.w1) ||0;
+      w01 = Number(r.w01)||0;
+    } else {
+      // 출금: 양수 권종은 -, 음수 권종(거스름돈)은 + 처리
+      // 입금: 양수 권종은 +, 음수 권종은 - 처리
+      const sign = (r.type === 'out') ? -1 : 1;
+      w50 += sign * (Number(r.w50)||0); // 음수면 sign*음수 = 반대방향 자동처리
+      w10 += sign * (Number(r.w10)||0);
+      w5  += sign * (Number(r.w5) ||0);
+      w1  += sign * (Number(r.w1) ||0);
+      w01 += sign * (Number(r.w01)||0);
+    }
   }
+
+  // 권종 합계금액 vs 장부잔액 차액
+  const wTotal = w50*50000 + w10*10000 + w5*5000 + w1*1000 + w01*100;
+  const diff = wTotal - runBal;
+  const diffStr = diff === 0 ? '일치' : (diff > 0 ? '+' + fmt(diff) + '원 (실사 초과)' : fmt(diff) + '원 (실사 부족)');
 
   const ok = confirm(
     '[' + date + '] 마감시재를 확정하시겠습니까?' +
     '\n\n입금 합계: ' + fmt(totalIn) + '원' +
     '\n출금 합계: ' + fmt(totalOut) + '원' +
-    '\n마감 잔액: ' + fmt(runBal) + '원' +
+    '\n장부 잔액: ' + fmt(runBal) + '원' +
+    '\n권종 합계: ' + fmt(wTotal) + '원' +
+    '\n실사 차액: ' + diffStr +
     '\n\n※ 마감 후 해당 날짜 내역은 수정/삭제가 잠깁니다.'
   );
   if (!ok) return;
@@ -7659,7 +7683,8 @@ function closeCashDay() {
     desc: '[마감] ' + date + ' 일마감',
     amount: runBal,
     w50, w10, w5, w1, w01,
-    memo: '입금 ' + fmt(totalIn) + ' / 출금 ' + fmt(totalOut) + ' / 잔액 ' + fmt(runBal),
+    diff: diff, // 실사 차액 저장
+    memo: '입금 ' + fmt(totalIn) + ' / 출금 ' + fmt(totalOut) + ' / 잔액 ' + fmt(runBal) + (diff !== 0 ? ' / 차액 ' + fmt(diff) : ''),
     closedAt: new Date().toISOString(),
   };
   DB.cashLedger.push(closeEntry);
@@ -7982,6 +8007,84 @@ function openSettleModal() {
 
 function closeSettleModal() {
   document.getElementById('modal-settle').style.display = 'none';
+}
+
+// 결제 삭제
+function deleteSettlement(id) {
+  const st = DB.settlements.find(s => s.id === id);
+  if (!st) return;
+  const desc = st.partnerName + ' / ' + st.date;
+  if (!confirm(`"${desc}" 결제를 삭제하시겠습니까?\n삭제 시 미수가 복구됩니다.`)) return;
+  DB.settlements = DB.settlements.filter(s => s.id !== id);
+  saveDB(); renderSales(); renderUnpaid();
+  toast('결제가 삭제되었습니다');
+}
+
+// 결제 수정 모달 열기
+function openEditSettleModal(id) {
+  const st = DB.settlements.find(s => s.id === id);
+  if (!st) return;
+  // 기존 모달 활용: 수정 모드로 열기
+  const modal = document.getElementById('modal-settle');
+  modal.dataset.editId = id;
+  modal.style.display = 'flex';
+  // 파트너 선택
+  const psel = document.getElementById('st-partner');
+  if (psel && st.partnerId) psel.value = st.partnerId;
+  loadSettleData();
+  // 날짜/메모/결제방법 세팅
+  setTimeout(() => {
+    const dateEl = document.getElementById('st-date');
+    if (dateEl && st.date) dateEl.value = st.date;
+    const memoEl = document.getElementById('st-memo');
+    if (memoEl) memoEl.value = st.memo || '';
+    const methodEl = document.getElementById('st-method');
+    if (methodEl) methodEl.value = st.payMethod || '현금';
+    const goldEl = document.getElementById('st-gold');
+    if (goldEl) goldEl.value = st.payGold > 0 ? st.payGold : '';
+    const laborEl = document.getElementById('st-labor');
+    if (laborEl) laborEl.value = st.payLabor > 0 ? st.payLabor : '';
+    // 모달 타이틀 변경
+    const titleEl = modal.querySelector('.modal-title') || modal.querySelector('[style*="결제처리"]');
+    if (titleEl) titleEl.textContent = '💳 결제 수정';
+    // 저장 버튼 변경
+    const saveBtn = modal.querySelector('button[onclick="confirmSettle()"]');
+    if (saveBtn) {
+      saveBtn.textContent = '수정 완료';
+      saveBtn.onclick = () => saveEditSettle(id);
+    }
+  }, 100);
+}
+
+// 결제 수정 저장
+function saveEditSettle(id) {
+  const idx = DB.settlements.findIndex(s => s.id === id);
+  if (idx === -1) return;
+  const dateEl = document.getElementById('st-date');
+  const memoEl = document.getElementById('st-memo');
+  const methodEl = document.getElementById('st-method');
+  const goldEl = document.getElementById('st-gold');
+  const laborEl = document.getElementById('st-labor');
+  DB.settlements[idx] = {
+    ...DB.settlements[idx],
+    date: dateEl?.value || DB.settlements[idx].date,
+    memo: memoEl?.value || '',
+    payMethod: methodEl?.value || '현금',
+    payGold: parseFloat(goldEl?.value) || 0,
+    payLabor: parseFloat(laborEl?.value) || 0,
+    updatedBy: currentUser?.id,
+    updatedAt: today()
+  };
+  // 모달 초기화
+  const modal = document.getElementById('modal-settle');
+  delete modal.dataset.editId;
+  const saveBtn = modal.querySelector('button[onclick]');
+  if (saveBtn) {
+    saveBtn.textContent = '결제 확정';
+    saveBtn.onclick = confirmSettle;
+  }
+  saveDB(); closeSettleModal(); renderSales(); renderUnpaid();
+  toast('✅ 결제가 수정되었습니다');
 }
 
 function quickSettle(partnerId, partnerName) {
