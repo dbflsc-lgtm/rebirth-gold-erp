@@ -7174,13 +7174,15 @@ function renderCashLedger() {
   let rows = [...DB.cashLedger].sort((a,b) => { const d=b.date.localeCompare(a.date); return d!==0?d:(b.id-a.id); });
   if (dateFilter) rows = rows.filter(r => r.date === dateFilter);
 
-  // 잔액 누적 계산 (과거→현재, 같은 날짜 내 시작시재 최우선)
+  // 잔액 누적 계산 (과거→현재, 같은 날 start 맨 앞 / close 맨 뒤)
   const allSorted = [...DB.cashLedger].sort((a,b) => {
-    const dateDiff = a.date.localeCompare(b.date); // 과거→현재
+    const dateDiff = a.date.localeCompare(b.date);
     if (dateDiff !== 0) return dateDiff;
     if (a.type === 'start' && b.type !== 'start') return -1; // 시작시재 맨 앞
     if (b.type === 'start' && a.type !== 'start') return  1;
-    return a.id - b.id; // 나머지는 등록 순
+    if (a.type === 'close' && b.type !== 'close') return  1; // 마감 맨 뒤
+    if (b.type === 'close' && a.type !== 'close') return -1;
+    return a.id - b.id;
   });
   const balMap = {};
   let runBal = 0;
@@ -7188,6 +7190,7 @@ function renderCashLedger() {
     if (r.type === 'start') runBal = Number(r.amount) || 0;
     else if (r.type === 'in')  runBal += Number(r.amount) || 0;
     else if (r.type === 'out') runBal -= Number(r.amount) || 0;
+    else if (r.type === 'close') runBal = Number(r.amount) || 0; // 마감 잔액을 기준점으로 이어받음
     balMap[r.id] = runBal;
   }
 
