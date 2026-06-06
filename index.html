@@ -6339,17 +6339,6 @@ function saveCdDeal() {
     DB.customerDeals.push(deal);
   }
 
-  // 현금시재 자동 연동
-  DB.cashLedger = DB.cashLedger.filter(r=>r.cdId!==deal.id);
-  if (cashAmt>0) {
-    DB.cashLedger.push({
-      id: Date.now()+1, date:deal.date, type:'in',
-      desc:'고객수금 — '+name, amount:cashAmt, cat:'판매대금',
-      memo:document.getElementById('cd-pay-cash-memo').value, cdId:deal.id,
-      createdAt:nowStr(), createdBy:currentUser?.id, createdByName:currentUser?.name
-    });
-  }
-
   saveDB();
   closeCdModal();
   renderCustomerDeals();
