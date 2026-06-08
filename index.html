@@ -6020,7 +6020,7 @@ function confirmMatchInventory(invId) {
     o.stage = 'C';
   }
 
-  saveDB('cashLedger');
+  saveDB('inventory');
   closeMatchInventoryModal();
   renderOrders();
   renderInventory();
@@ -6585,7 +6585,7 @@ function saveSalePayment() {
     });
   }
 
-  saveDB('goldLedger');
+  saveDB('sales');
   closeSalePaymentModal();
   renderSales();
   if (typeof renderCashLedger === 'function') renderCashLedger();
@@ -6674,7 +6674,7 @@ function saveEditPartner() {
     });
   }
 
-  saveDB('cashLedger');
+  saveDB('partners');
   closeModal('edit-partner');
   renderPartners();
   if (nameChanged) {
@@ -7595,7 +7595,7 @@ function saveBulkInventory() {
 
   if (registeredCount === 0) { toast('중량을 입력해주세요','error'); return; }
 
-  saveDB('cashLedger');
+  saveDB('inventory');
   closeModal('bulk-inventory');
   renderOrders();
   renderInventory();
@@ -7620,7 +7620,7 @@ function doLogin() {
   acct.lastLogin = new Date().toISOString().slice(0,16).replace('T',' ');
   // 세션 유지 — 새로고침해도 로그인 상태 유지
   try { sessionStorage.setItem('rg-session', JSON.stringify(currentUser)); } catch(e) {}
-  saveDB('cashLedger');
+  saveDB('accounts');
   document.getElementById('login-screen').style.display = 'none';
   document.getElementById('sidebar').style.display = 'flex';
   document.getElementById('main').style.display = 'flex';
@@ -8088,6 +8088,7 @@ function saveCashEntry() {
   } else {
     DB.cashLedger.push(entry);
   }
+  saveDB('cashLedger');
   closeCashModal();
   // 저장한 날짜로 필터 설정해서 추가된 항목이 보이도록
   const clFilterEl2 = document.getElementById('cl-date-filter');
@@ -8101,6 +8102,7 @@ function deleteCashEntry(id) {
   if (row && cashDateLocked(row.date)) { toast('마감된 날짜는 삭제할 수 없습니다', 'error'); return; }
   if (!confirm('이 내역을 삭제하시겠습니까?')) return;
   DB.cashLedger = DB.cashLedger.filter(r=>r.id!==id);
+  saveDB('cashLedger');
   renderCashLedger();
   toast('삭제되었습니다');
 }
