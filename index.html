@@ -65,25 +65,45 @@
     return json.documents || [];
   }
 
-  // 배열을 청크 단위로 분할 저장 (문서당 500개)
+  // 배열을 청크 단위로 분할 저장 (문서당 500개, 삭제 없이 덮어쓰기)
   async function saveCollection(colName, arr) {
     if (!Array.isArray(arr)) return true;
-    // 기존 문서 목록 가져와서 삭제 (청크 재생성)
-    const existing = await fsListDocs(colName);
-    for (const doc of existing) {
-      const docId = doc.name.split('/').pop();
-      await fsDelete(`${colName}/${docId}`);
-    }
-    // 500개씩 청크로 저장
     const CHUNK = 500;
+    const newChunkCount = Math.ceil(arr.length / CHUNK) || 1;
+
+    // 1. 새 청크 병렬 저장 (삭제 없이 바로 덮어씀)
+    const writeTasks = [];
     for (let i = 0; i < arr.length; i += CHUNK) {
       const chunk = arr.slice(i, i + CHUNK);
       const chunkId = 'chunk_' + Math.floor(i / CHUNK);
-      await fsPatch(`${colName}/${chunkId}`, {
+      writeTasks.push(fsPatch(`${colName}/${chunkId}`, {
         data:  { stringValue: JSON.stringify(chunk) },
-        index: { integerValue: String(Math.floor(i / CHUNK)) }
-      });
+        index: { integerValue: String(Math.floor(i / CHUNK)) },
+        total: { integerValue: String(newChunkCount) }
+      }));
     }
+    // 빈 배열이면 chunk_0에 빈 배열 저장
+    if (arr.length === 0) {
+      writeTasks.push(fsPatch(`${colName}/chunk_0`, {
+        data:  { stringValue: '[]' },
+        index: { integerValue: '0' },
+        total: { integerValue: '1' }
+      }));
+    }
+    await Promise.all(writeTasks);
+
+    // 2. 쓰기 완료 후 남은 구 청크 삭제 (데이터 줄어든 경우)
+    const existing = await fsListDocs(colName);
+    const deleteTasks = [];
+    for (const doc of existing) {
+      const docId = doc.name.split('/').pop();
+      const idx = parseInt(docId.replace('chunk_', ''));
+      if (!isNaN(idx) && idx >= newChunkCount) {
+        deleteTasks.push(fsDelete(`${colName}/${docId}`));
+      }
+    }
+    if (deleteTasks.length) await Promise.all(deleteTasks);
+
     return true;
   }
 
