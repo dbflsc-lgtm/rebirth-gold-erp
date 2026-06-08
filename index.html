@@ -68,7 +68,7 @@
   // 배열을 청크 단위로 분할 저장 (문서당 500개, 삭제 없이 덮어쓰기)
   async function saveCollection(colName, arr) {
     if (!Array.isArray(arr)) return true;
-    const CHUNK = 500;
+    const CHUNK = 200; // Firestore 1MB 한도 대응
     const newChunkCount = Math.ceil(arr.length / CHUNK) || 1;
 
     // 1. 새 청크 병렬 저장 (삭제 없이 바로 덮어씀)
