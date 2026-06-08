@@ -892,11 +892,7 @@
         </div>
       </div>
       <div class="dash-row">
-        <div class="dash-card">
-          <div class="dash-card-title">최근 판매 내역</div>
-          <div id="dash-sales-list"><div class="empty-state">판매 내역이 없습니다</div></div>
-        </div>
-        <div class="dash-card">
+        <div class="dash-card" style="flex:1">
           <div class="dash-card-title">재고 현황 (카테고리별)</div>
           <div id="dash-inv-list"><div class="empty-state">재고가 없습니다</div></div>
         </div>
@@ -6183,13 +6179,7 @@ function renderDashboard() {
   document.getElementById('ds-sales').textContent = ms.length;
   document.getElementById('ds-revenue').textContent = fmt(ms.reduce((t,s)=>t+Number(s.price),0));
   document.getElementById('ds-catalog').textContent = DB.catalog.length;
-  const sl = document.getElementById('dash-sales-list');
-  const recent = DB.sales.slice().sort((a,b)=>b.date.localeCompare(a.date)).slice(0,5);
-  sl.innerHTML = recent.length ? recent.map(s=>`
-    <div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border);font-size:13px">
-      <span style="color:var(--text2)">${s.date} · ${s.partner||'—'}</span>
-      <span style="color:var(--gold)">${fmt(s.price)}원</span>
-    </div>`).join('') : '<div class="empty-state">판매 내역 없음</div>';
+
   const il = document.getElementById('dash-inv-list');
   const cats = {};
   DB.inventory.filter(i=>i.status==='일반').forEach(i=>{ cats[i.cat]=(cats[i.cat]||0)+1; });
