@@ -167,6 +167,23 @@
     }
   };
 
+  // 특정 컬렉션만 저장 (충돌 방지 핵심)
+  window._fbSaveKey = async function(key, data) {
+    try {
+      if (COLLECTIONS[key] !== undefined) {
+        await saveCollection(COLLECTIONS[key], data);
+      } else if (META_FIELDS.includes(key)) {
+        const metaFields = {};
+        metaFields[key] = { stringValue: JSON.stringify(data) };
+        await fsPatch('erp/meta', metaFields);
+      }
+      return true;
+    } catch(e) {
+      console.error('Firebase saveKey error:', e);
+      return false;
+    }
+  };
+
   window._fbReady = true;
   window._fbInit = async function() { return true; }; // API Key 방식은 Auth 불필요
   console.log('✅ Firebase REST API v3 준비됨 (컬렉션 분산 + API Key)');
@@ -3481,24 +3498,32 @@ const DEFAULT_ADMIN = { id:'admin', name:'관리자', pw:'rebirth1234', role:'ad
 let DB = { catalog:[], inventory:[], sales:[], orders:[], rental:[], partners:[], goldprices:[], accounts:[], permissions:{}, returned:[], auditState:null, cashLedger:[], goldLedger:[], settlements:[], goldPurchases:[], customerDeals:[] };
 let currentUser = null; // { id, name, role }
 
-function saveDB() {
-  // localStorage 즉시 저장 (빠른 응답)
+function saveDB(key) {
+  // localStorage 즉시 저장
   try { localStorage.setItem('rg-erp', JSON.stringify(DB)); } catch(e) {}
-  // Firebase 클라우드 저장 (비동기)
-  if (window._fbReady && window._fbSave) {
-    window._fbSave(DB).then(ok => {
-      const el = document.getElementById('fb-sync-status');
-      if (el) {
-        if (ok) {
-          el.textContent = '☁ 저장됨 ' + new Date().toLocaleTimeString('ko-KR',{hour:'2-digit',minute:'2-digit'});
-          el.style.color = '#1a7a40';
-        } else {
-          el.textContent = '⚠ 클라우드 저장 실패';
-          el.style.color = '#c0392b';
-        }
+
+  if (!window._fbReady) return;
+
+  const el = document.getElementById('fb-sync-status');
+  if (el) { el.textContent = '☁ 저장 중...'; el.style.color = '#d4770a'; }
+
+  // key 지정 시 해당 컬렉션만 저장 (충돌 방지)
+  // key 없으면 전체 저장 (초기화, 일괄작업 등)
+  const savePromise = key && window._fbSaveKey
+    ? window._fbSaveKey(key, DB[key])
+    : window._fbSave(DB);
+
+  savePromise.then(ok => {
+    if (el) {
+      if (ok) {
+        el.textContent = '☁ 저장됨 ' + new Date().toLocaleTimeString('ko-KR',{hour:'2-digit',minute:'2-digit'});
+        el.style.color = '#1a7a40';
+      } else {
+        el.textContent = '⚠ 클라우드 저장 실패';
+        el.style.color = '#c0392b';
       }
-    });
-  }
+    }
+  });
 }
 async function loadDBFromFirebase() {
   if (!window._fbReady || !window._fbLoad) return false;
@@ -3572,7 +3597,7 @@ function loadDB() {
   }
   if (!DB.accounts || DB.accounts.length === 0) {
     DB.accounts = [DEFAULT_ADMIN];
-    saveDB();
+    saveDB('permissions');
   }
 }
 
@@ -3892,7 +3917,7 @@ function saveMultiInventory() {
   });
   if (!count) { toast('중량을 입력한 행이 없습니다','error'); return; }
   _invModalOrderId = '';
-  saveDB(); closeModal('inventory'); renderInventory(); toast(`${count}개 재고 등록 완료`);
+  saveDB('inventory'); closeModal('inventory'); renderInventory(); toast(`${count}개 재고 등록 완료`);
 }
 
 // 하위 호환: 단건 saveInventory
@@ -4268,7 +4293,7 @@ function saveMultiOrder() {
     count++;
   });
   if (count === 0) { toast('모델을 선택한 행이 없습니다','error'); return; }
-  saveDB(); closeModal('order'); renderOrders(); toast(`${count}건 주문 등록 완료`);
+  saveDB('orders'); closeModal('order'); renderOrders(); toast(`${count}건 주문 등록 완료`);
 }
 
 // saveOrder 단건용 (openInventoryFromOrder에서 사용)
@@ -4609,7 +4634,7 @@ function saveCatalog() {
         updatedBy: currentUser?.id, updatedByName: currentUser?.name, updatedAt: today()
       };
       clearPhoto();
-      saveDB(); closeModal('catalog'); renderCatalog();
+      saveDB('catalog'); closeModal('catalog'); renderCatalog();
       toast('✅ 카탈로그 수정 완료');
     }
   } else {
@@ -4620,7 +4645,7 @@ function saveCatalog() {
       createdBy: currentUser?.id, createdByName: currentUser?.name, createdAt: today()
     });
     clearPhoto();
-    saveDB(); closeModal('catalog'); renderCatalog();
+    saveDB('catalog'); closeModal('catalog'); renderCatalog();
     toast('카탈로그 등록 완료');
   }
 }
@@ -4737,7 +4762,7 @@ function saveSale(printAfter) {
   };
   DB.sales.push(saleData);
   if (invId) { const inv = DB.inventory.find(i=>i.id==invId); if (inv) { inv.status = '판매'; inv.soldAt = saleData.date; inv.soldTo = saleData.partner; } }
-  saveDB(); closeModal('sales'); renderSales(); toast('판매 등록 완료');
+  saveDB('sales'); closeModal('sales'); renderSales(); toast('판매 등록 완료');
   if (printAfter) setTimeout(() => printReceipt(saleData), 200);
 }
 
@@ -5013,7 +5038,7 @@ function saveRental() {
     createdBy: currentUser?.id, createdByName: currentUser?.name, createdAt: today()
   });
   if (inv) inv.status = '대여중';
-  saveDB(); closeModal('rental'); renderRental(); toast('대여 등록 완료');
+  saveDB('rental'); closeModal('rental'); renderRental(); toast('대여 등록 완료');
 }
 
 function savePartner() {
@@ -5030,7 +5055,7 @@ function savePartner() {
     addr: document.getElementById('p-addr').value,
     memo: document.getElementById('p-memo').value
   });
-  saveDB(); closeModal('partner'); renderPartners(); toast('거래처 등록 완료');
+  saveDB('partners'); closeModal('partner'); renderPartners(); toast('거래처 등록 완료');
 }
 
 function saveGoldPrice() {
@@ -5056,13 +5081,13 @@ function saveGoldPrice() {
   }
   // 최신순 정렬
   DB.goldprices.sort((a,b)=>b.date.localeCompare(a.date));
-  saveDB(); closeModal('goldprice'); renderGoldPrice();
+  saveDB('goldprices'); closeModal('goldprice'); renderGoldPrice();
 }
 
 function deleteGoldPrice(id) {
   if (!confirm('이 시세를 삭제하시겠습니까?')) return;
   DB.goldprices = DB.goldprices.filter(g=>g.id!==id);
-  saveDB(); renderGoldPrice(); toast('삭제되었습니다');
+  saveDB('goldprices'); renderGoldPrice(); toast('삭제되었습니다');
 }
 
 // 1돈↔1g 변환 함수
@@ -5548,7 +5573,7 @@ function renderInventoryStats(data) {
 function restoreInventory(id) {
   if (!confirm('이 재고를 현재 재고로 복구하시겠습니까?\n연결된 판매 내역은 유지됩니다.')) return;
   const inv = DB.inventory.find(i=>i.id===id);
-  if (inv) { inv.status = '일반'; saveDB(); renderInventory(); toast('재고 복구 완료'); }
+  if (inv) { inv.status = '일반'; saveDB('inventory'); renderInventory(); toast('재고 복구 완료'); }
 }
 
 // 현재 조회 중인 판매 데이터 (필터 적용 후)
@@ -5975,7 +6000,7 @@ function confirmMatchInventory(invId) {
     o.stage = 'C';
   }
 
-  saveDB();
+  saveDB('cashLedger');
   closeMatchInventoryModal();
   renderOrders();
   renderInventory();
@@ -6011,7 +6036,7 @@ function openInventoryFromOrder(orderId) {
 
 function changeOrderStage(id, stage) {
   const o = DB.orders.find(x=>x.id===id);
-  if (o) { o.stage = stage; saveDB(); toast('단계 변경 완료'); }
+  if (o) { o.stage = stage; saveDB('orders'); toast('단계 변경 완료'); }
 }
 
 function renderRental() {
@@ -6045,7 +6070,7 @@ function returnRental(id) {
     r.status = '회수완료';
     const inv = DB.inventory.find(i=>i.id===r.invId);
     if (inv) inv.status = '일반';
-    saveDB(); renderRental(); toast('회수 처리 완료');
+    saveDB('rental'); renderRental(); toast('회수 처리 완료');
   }
 }
 
@@ -6159,7 +6184,7 @@ function deleteCatalog(id) {
   const rec = DB.catalog.find(c=>c.id===id);
   if (!canDelete('catalog', rec)) { toast('삭제 권한이 없습니다','error'); return; }
   if (!confirm('삭제하시겠습니까?')) return;
-  DB.catalog = DB.catalog.filter(c=>c.id!==id); saveDB(); renderCatalog(); toast('삭제됨');
+  DB.catalog = DB.catalog.filter(c=>c.id!==id); saveDB('catalog'); renderCatalog(); toast('삭제됨');
 }
 function deleteInventory(id) {
   const rec = DB.inventory.find(i=>i.id===id);
@@ -6171,7 +6196,7 @@ function deleteInventory(id) {
   rec.deletedById = currentUser?.id;
   DB.deletedInventory.push(rec);
   DB.inventory = DB.inventory.filter(i=>i.id!==id);
-  saveDB(); renderInventory(); toast('삭제됨 (삭제재고에서 복구 가능)');
+  saveDB('inventory'); renderInventory(); toast('삭제됨 (삭제재고에서 복구 가능)');
 }
 
 
@@ -6340,7 +6365,7 @@ function saveCdDeal() {
     DB.customerDeals.push(deal);
   }
 
-  saveDB();
+  saveDB('customerDeals');
   closeCdModal();
   renderCustomerDeals();
   if (typeof renderCashLedger==='function') renderCashLedger();
@@ -6349,9 +6374,8 @@ function saveCdDeal() {
 
 function deleteCdDeal(id) {
   if (!confirm('이 거래를 삭제하시겠습니까?')) return;
-  DB.cashLedger = DB.cashLedger.filter(r=>r.cdId!==id);
   DB.customerDeals = DB.customerDeals.filter(d=>d.id!==id);
-  saveDB();
+  saveDB('customerDeals');
   renderCustomerDeals();
   toast('삭제되었습니다');
 }
@@ -6541,7 +6565,7 @@ function saveSalePayment() {
     });
   }
 
-  saveDB();
+  saveDB('goldLedger');
   closeSalePaymentModal();
   renderSales();
   if (typeof renderCashLedger === 'function') renderCashLedger();
@@ -6553,19 +6577,19 @@ function deleteSale(id) {
   const rec = DB.sales.find(s=>s.id===id);
   if (!canDelete('sales', rec)) { toast('삭제 권한이 없습니다','error'); return; }
   if (!confirm('삭제하시겠습니까?')) return;
-  DB.sales = DB.sales.filter(s=>s.id!==id); saveDB(); renderSales(); toast('삭제됨');
+  DB.sales = DB.sales.filter(s=>s.id!==id); saveDB('sales'); renderSales(); toast('삭제됨');
 }
 function deleteOrder(id) {
   const rec = DB.orders.find(o=>o.id===id);
   if (!canDelete('orders', rec)) { toast('삭제 권한이 없습니다','error'); return; }
   if (!confirm('삭제하시겠습니까?')) return;
-  DB.orders = DB.orders.filter(o=>o.id!==id); saveDB(); renderOrders(); toast('삭제됨');
+  DB.orders = DB.orders.filter(o=>o.id!==id); saveDB('orders'); renderOrders(); toast('삭제됨');
 }
 function deleteRental(id) {
   const rec = DB.rental.find(r=>r.id===id);
   if (!canDelete('rental', rec)) { toast('삭제 권한이 없습니다','error'); return; }
   if (!confirm('삭제하시겠습니까?')) return;
-  DB.rental = DB.rental.filter(r=>r.id!==id); saveDB(); renderRental(); toast('삭제됨');
+  DB.rental = DB.rental.filter(r=>r.id!==id); saveDB('rental'); renderRental(); toast('삭제됨');
 }
 
 // ── 거래처 수정 (이름 변경 시 재고/카탈로그 전체 연동) ──────────
@@ -6630,7 +6654,7 @@ function saveEditPartner() {
     });
   }
 
-  saveDB();
+  saveDB('cashLedger');
   closeModal('edit-partner');
   renderPartners();
   if (nameChanged) {
@@ -6640,7 +6664,7 @@ function saveEditPartner() {
   }
 }
 
-function deletePartner(id) { if(!confirm('삭제하시겠습니까?'))return; DB.partners=DB.partners.filter(p=>p.id!==id); saveDB(); renderPartners(); toast('삭제됨'); }
+function deletePartner(id) { if(!confirm('삭제하시겠습니까?'))return; DB.partners=DB.partners.filter(p=>p.id!==id); saveDB('partners'); renderPartners(); toast('삭제됨'); }
 
 function checkAllByBody(bodyId, el) {
   document.querySelectorAll(`#${bodyId} input[type="checkbox"]`).forEach(cb => cb.checked = el.checked);
@@ -6687,7 +6711,7 @@ function saveEditInventory() {
   inv.type = document.getElementById('ie-type').value;
   inv.date = document.getElementById('ie-date').value;
   inv.serial = document.getElementById('ie-serial-edit').value;
-  saveDB(); closeModal('inv-edit'); renderInventory(); toast('재고 수정 완료');
+  saveDB('inventory'); closeModal('inv-edit'); renderInventory(); toast('재고 수정 완료');
 }
 
 function sellFromInventory() {
@@ -6869,7 +6893,7 @@ function saveBulkSale() {
     count++;
   });
   if (!count) { toast('등록할 항목이 없습니다','error'); return; }
-  saveDB(); closeModal('bulk-sale'); renderInventory(); renderSales();
+  saveDB('sales'); closeModal('bulk-sale'); renderInventory(); renderSales();
   toast(`${count}건 판매등록 완료`);
   // 거래처별로 그룹핑해서 영수증 출력 여부 묻기
   const partnerIds = [...new Set(savedSales.map(s=>s.partnerId))];
@@ -7001,7 +7025,7 @@ function saveReturnSale() {
     toast('판매 반품 완료');
   }
 
-  saveDB();
+  saveDB('goldLedger');
   closeModal('return-sale');
   renderSales();
   renderInventory();
@@ -7176,7 +7200,7 @@ function restoreDeletedInventory(id) {
   delete inv.deletedAt;
   DB.inventory.push(inv);
   DB.deletedInventory = DB.deletedInventory.filter(i=>i.id!==id);
-  saveDB(); renderDeletedInventory(); toast('재고 복구 완료');
+  saveDB('inventory'); renderDeletedInventory(); toast('재고 복구 완료');
 }
 
 // ── 반납재고 ───────────────────────────────────────────────
@@ -7221,7 +7245,7 @@ function saveReturn() {
     invId
   });
   inv.status = '반납';
-  saveDB(); closeModal('return'); renderReturnedInventory(); toast('반납 처리 완료');
+  saveDB('returned'); closeModal('return'); renderReturnedInventory(); toast('반납 처리 완료');
 }
 
 function restoreFromReturn(id) {
@@ -7231,7 +7255,7 @@ function restoreFromReturn(id) {
   const inv = DB.inventory.find(i=>i.id===r.invId);
   if (inv) inv.status = '일반';
   DB.returned = DB.returned.filter(x=>x.id!==id);
-  saveDB(); renderReturnedInventory(); toast('재고 복구 완료');
+  saveDB('returned'); renderReturnedInventory(); toast('재고 복구 완료');
 }
 
 // ── 재고조사 ───────────────────────────────────────────────
@@ -7242,7 +7266,7 @@ function initAudit() {
     unchecked: DB.inventory.filter(i=>i.status!=='판매'&&i.status!=='반납').map(i=>i.id),
     checked: []
   };
-  saveDB(); renderAudit(); toast('재고조사 초기화 완료 — 총 ' + DB.auditState.unchecked.length + '개');
+  saveDB('auditState'); renderAudit(); toast('재고조사 초기화 완료 — 총 ' + DB.auditState.unchecked.length + '개');
 }
 
 function renderAudit() {
@@ -7344,7 +7368,7 @@ function markChecked(invId) {
   if (!DB.auditState) return;
   DB.auditState.unchecked = DB.auditState.unchecked.filter(id=>id!==invId);
   if (!DB.auditState.checked.includes(invId)) DB.auditState.checked.push(invId);
-  saveDB();
+  saveDB('auditState');
   renderAudit();
   // 검사완료 목록 맨 위로 스크롤
   const scroll = document.getElementById('audit-checked-scroll');
@@ -7355,7 +7379,7 @@ function unmarkChecked(invId) {
   if (!DB.auditState) return;
   DB.auditState.checked = DB.auditState.checked.filter(id=>id!==invId);
   if (!DB.auditState.unchecked.includes(invId)) DB.auditState.unchecked.unshift(invId);
-  saveDB(); renderAudit();
+  saveDB('auditState'); renderAudit();
 }
 
 function confirmPresent() {
@@ -7366,7 +7390,7 @@ function confirmPresent() {
     DB.auditState.unchecked = DB.auditState.unchecked.filter(id=>id!==cb.dataset.id);
     if (!DB.auditState.checked.includes(cb.dataset.id)) DB.auditState.checked.push(cb.dataset.id);
   });
-  saveDB(); renderAudit(); toast(checked.length + '개 재고있음 확인 처리');
+  saveDB('auditState'); renderAudit(); toast(checked.length + '개 재고있음 확인 처리');
 }
 
 function filterAuditList(type, q) {
@@ -7551,7 +7575,7 @@ function saveBulkInventory() {
 
   if (registeredCount === 0) { toast('중량을 입력해주세요','error'); return; }
 
-  saveDB();
+  saveDB('cashLedger');
   closeModal('bulk-inventory');
   renderOrders();
   renderInventory();
@@ -7576,7 +7600,7 @@ function doLogin() {
   acct.lastLogin = new Date().toISOString().slice(0,16).replace('T',' ');
   // 세션 유지 — 새로고침해도 로그인 상태 유지
   try { sessionStorage.setItem('rg-session', JSON.stringify(currentUser)); } catch(e) {}
-  saveDB();
+  saveDB('cashLedger');
   document.getElementById('login-screen').style.display = 'none';
   document.getElementById('sidebar').style.display = 'flex';
   document.getElementById('main').style.display = 'flex';
@@ -7704,7 +7728,7 @@ function saveAccount() {
   if (!name || !id || !pw) { toast('모든 항목을 입력해주세요','error'); return; }
   if (DB.accounts.find(a=>a.id===id)) { toast('이미 존재하는 아이디입니다','error'); return; }
   DB.accounts.push({ id, name, pw, role, createdAt: today(), lastLogin: '' });
-  saveDB(); closeModal('account'); renderAccounts(); toast('계정 등록 완료');
+  saveDB('accounts'); closeModal('account'); renderAccounts(); toast('계정 등록 완료');
 }
 
 function deleteAccount(id) {
@@ -7712,7 +7736,7 @@ function deleteAccount(id) {
   if (!confirm('계정을 삭제하시겠습니까?')) return;
   DB.accounts = DB.accounts.filter(a=>a.id!==id);
   delete DB.permissions[id];
-  saveDB(); renderAccounts(); renderPermissionsUserList(); toast('삭제됨');
+  saveDB('accounts'); renderAccounts(); renderPermissionsUserList(); toast('삭제됨');
 }
 
 function renderAccounts() {
@@ -7780,7 +7804,7 @@ function savePermissions() {
       if (hideMfrCb) DB.permissions[userId]['orders'].hideMfr = hideMfrCb.checked;
     }
   });
-  saveDB(); toast('권한 저장 완료'); applyPermissionUI();
+  saveDB('permissions'); toast('권한 저장 완료'); applyPermissionUI();
 }
 
 // ── Init ─────────────────────────────────────────────────────
@@ -7967,7 +7991,7 @@ function renderCashLedger() {
     <span style="font-size:12px;color:var(--text2)">입금 <b>${fmt(totalIn)}</b>원 &nbsp;|&nbsp; 출금 <b>${fmt(totalOut)}</b>원 &nbsp;|&nbsp; 순증감 <b style="color:${net>=0?'var(--success)':'var(--danger)'}>${fmt(net)}</b>원</span>
     <span style="font-size:12px;color:var(--text3)">현재잔액 ${fmt(curBal)}원</span>
   `;
-  saveDB();
+  saveDB('goldLedger');
 }
 
 // 권종 수량 입력 시 실시간 합계 계산 및 금액 자동입력
@@ -8205,7 +8229,7 @@ function renderGoldLedger() {
     <span style="font-size:12px;color:var(--text2)">입고(순금) <b>${totalIn.toFixed(3)}g</b> &nbsp;|&nbsp; 출고(순금) <b>${totalOut.toFixed(3)}g</b> &nbsp;|&nbsp; 순증감 <b style="color:${net>=0?'var(--success)':'var(--danger)'}">${net.toFixed(3)}g</b></span>
     <span style="font-size:12px;color:var(--text3)">현재잔량(순금) ${curBal.toFixed(3)}g</span>
   `;
-  saveDB();
+  saveDB('goldPurchases');
 }
 
 function openGoldModal(id) {
@@ -8378,7 +8402,7 @@ function closeCashDay() {
   if (!DB.cashClosedDates) DB.cashClosedDates = [];
   if (!DB.cashClosedDates.includes(date)) DB.cashClosedDates.push(date);
 
-  saveDB();
+  saveDB('goldPurchases');
   renderCashLedger();
   toast(date + ' 마감완료 — 잔액 ' + fmt(runBal) + '원');
 }
@@ -8703,7 +8727,7 @@ function deleteSettlement(id) {
   const desc = st.partnerName + ' / ' + st.date;
   if (!confirm(`"${desc}" 결제를 삭제하시겠습니까?\n삭제 시 미수가 복구됩니다.`)) return;
   DB.settlements = DB.settlements.filter(s => s.id !== id);
-  saveDB(); renderSales(); renderUnpaid();
+  saveDB('sales'); renderSales(); renderUnpaid();
   toast('결제가 삭제되었습니다');
 }
 
@@ -8770,7 +8794,7 @@ function saveEditSettle(id) {
     saveBtn.textContent = '결제 확정';
     saveBtn.onclick = confirmSettle;
   }
-  saveDB(); closeSettleModal(); renderSales(); renderUnpaid();
+  saveDB('sales'); closeSettleModal(); renderSales(); renderUnpaid();
   toast('✅ 결제가 수정되었습니다');
 }
 
@@ -8821,7 +8845,7 @@ function loadSettleData() {
       s.unpaid = Number(s.price) || 0; fixCount++;
     }
   });
-  if (fixCount > 0) saveDB();
+  if (fixCount > 0) saveDB('sales');
 
   // 2단계: 해당 거래처 판매 전체 (반품 제외) — 그냥 합계만 보여주면 됨
   const unpaidSales = DB.sales.filter(s => {
@@ -9010,7 +9034,7 @@ function saveSettle() {
     createdAt: new Date().toLocaleString('ko-KR',{year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'})
   };
   DB.settlements.push(settlement);
-  saveDB();
+  saveDB('cashLedger');
   closeSettleModal();
   renderSales();
   renderUnpaid();
@@ -9111,7 +9135,7 @@ function closeGoldDay() {
   }
   if (!DB.goldClosedDates.includes(date)) DB.goldClosedDates.push(date);
 
-  saveDB();
+  saveDB('cashLedger');
   renderGoldLedger();
   toast(date + ' 금시재 마감완료 — 잔량 ' + runBal.toFixed(2) + 'g');
 }
@@ -9137,7 +9161,7 @@ function reopenCashDay() {
   // 잠금 날짜 해제
   DB.cashClosedDates = DB.cashClosedDates.filter(d => d !== date);
 
-  saveDB();
+  saveDB('cashLedger');
   renderCashLedger();
   toast(date + ' 마감 취소 완료');
 }
@@ -9155,7 +9179,7 @@ function reopenGoldDay() {
   DB.goldLedger = DB.goldLedger.filter(r => !(r.type === 'close' && r.date === date));
   DB.goldClosedDates = DB.goldClosedDates.filter(d => d !== date);
 
-  saveDB();
+  saveDB('cashLedger');
   renderGoldLedger();
   toast(date + ' 금시재 마감 취소 완료');
 }
@@ -9427,7 +9451,7 @@ function importPartnersFromExcel() {
     added++;
   });
 
-  saveDB();
+  saveDB('goldLedger');
   renderPartners();
   toast('✅ 매입처 등록 완료 — ' + added + '개 추가, ' + skipped + '개 중복 건너뜀');
 }
@@ -9528,7 +9552,7 @@ function importInventoryFromExcelFile(input) {
         added++;
       });
 
-      saveDB();
+      saveDB('goldLedger');
       renderInventory();
       input.value = ''; // 같은 파일 재업로드 가능하게
       toast(`✅ 엑셀 업로드 완료 — ${added}개 추가, ${skipped}개 중복 건너뜀${invalid?' (빈행 '+invalid+'개 제외)':''}`);
@@ -9763,7 +9787,7 @@ function saveGoldPurchase() {
     });
   }
 
-  saveDB();
+  saveDB('cashLedger');
   closeGoldPurchaseModal();
   renderGoldPurchase();
   toast(`✅ 고금매입 등록 완료 — 현금시재${(process==='material'||process==='refinery')?'·금시재':''} 자동 연동됨`);
@@ -9774,7 +9798,7 @@ function deleteGoldPurchase(id) {
   DB.goldPurchases = (DB.goldPurchases||[]).filter(r=>r.id!==id);
   DB.cashLedger = DB.cashLedger.filter(r=>r.memo!==`고금매입ID:${id}`);
   DB.goldLedger = DB.goldLedger.filter(r=>r.memo!==`고금매입ID:${id}`);
-  saveDB();
+  saveDB('cashLedger');
   renderGoldPurchase();
   toast('삭제되었습니다');
 }
@@ -10034,7 +10058,7 @@ function saveChangePw() {
   acct.pw = newPw;
   acct.pwChangedAt = today();
   acct.mustChangePw = false; // 임시비번 강제변경 해제
-  saveDB();
+  saveDB('goldLedger');
   closeChangePwModal();
   toast('✅ 비밀번호가 변경되었습니다');
   renderDashboard();
@@ -10050,7 +10074,7 @@ function adminResetPw(targetId, targetName) {
   acct.pw = tempPw;
   acct.pwResetAt = today();
   acct.pwResetBy = currentUser?.name;
-  saveDB();
+  saveDB('goldLedger');
   toast(`✅ ${targetName} 임시 비밀번호: ${tempPw}`);
   // 알림 유지
   setTimeout(()=>alert(`[${targetName}] 임시 비밀번호\n\n${tempPw}\n\n직원에게 전달 후 본인이 변경하도록 안내하세요.`), 500);
@@ -10179,7 +10203,7 @@ function saveTempPw() {
   acct.mustChangePw = true;
   acct.pwResetAt = nowStr ? nowStr() : today();
   acct.pwResetBy = currentUser?.name;
-  saveDB();
+  saveDB('customerDeals');
   modal.style.display = 'none';
   toast(`✅ [${targetName}] 임시 비밀번호: ${tempPw} — 직원에게 전달해주세요`);
 }
@@ -10199,7 +10223,7 @@ function emergencyResetAdmin() {
     admin.pw = 'rebirth1234';
     admin.mustChangePw = false;
   }
-  saveDB();
+  saveDB('customerDeals');
   alert('관리자 비밀번호가 rebirth1234 로 초기화되었습니다.\n로그인 후 즉시 변경해주세요!');
 }
 
@@ -10231,7 +10255,7 @@ function deleteSelectedInventory() {
   // 재고에서 제거
   DB.inventory = DB.inventory.filter(i => !ids.has(String(i.id)));
 
-  saveDB();
+  saveDB('customerDeals');
   renderInventory();
   toast(`🗑 ${toDelete.length}개 삭제 완료 (삭제재고에서 복구 가능)`);
 }
