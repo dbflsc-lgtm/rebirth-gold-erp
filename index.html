@@ -91,22 +91,26 @@
   }
 
   async function loadCollection(colName) {
-    const docs = await fsListDocs(colName);
-    if (!docs.length) return [];
-    // index 순서로 정렬
-    docs.sort((a, b) => {
-      const ai = parseInt(a.fields?.index?.integerValue || 0);
-      const bi = parseInt(b.fields?.index?.integerValue || 0);
-      return ai - bi;
-    });
-    let arr = [];
-    for (const doc of docs) {
-      try {
-        const chunk = JSON.parse(doc.fields?.data?.stringValue || '[]');
-        arr = arr.concat(chunk);
-      } catch(e) {}
+    try {
+      const docs = await fsListDocs(colName);
+      if (!docs.length) return [];
+      docs.sort((a, b) => {
+        const ai = parseInt(a.fields?.index?.integerValue || 0);
+        const bi = parseInt(b.fields?.index?.integerValue || 0);
+        return ai - bi;
+      });
+      let arr = [];
+      for (const doc of docs) {
+        try {
+          const chunk = JSON.parse(doc.fields?.data?.stringValue || '[]');
+          arr = arr.concat(chunk);
+        } catch(e) {}
+      }
+      return arr;
+    } catch(e) {
+      console.error('loadCollection error:', colName, e);
+      return [];
     }
-    return arr;
   }
 
   // 전체 DB 저장 (병렬 처리)
