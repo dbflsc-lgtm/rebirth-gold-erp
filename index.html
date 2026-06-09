@@ -3914,7 +3914,7 @@ function saveMultiInventory() {
   });
   if (!count) { toast('중량을 입력한 행이 없습니다','error'); return; }
   _invModalOrderId = '';
-  saveDB(); closeModal('inventory'); renderInventory(); toast(`${count}개 재고 등록 완료`);
+  saveDB('inventory'); closeModal('inventory'); renderInventory(); toast(`${count}개 재고 등록 완료`);
 }
 
 // 하위 호환: 단건 saveInventory
@@ -5606,7 +5606,7 @@ function renderInventoryStats(data) {
 function restoreInventory(id) {
   if (!confirm('이 재고를 현재 재고로 복구하시겠습니까?\n연결된 판매 내역은 유지됩니다.')) return;
   const inv = DB.inventory.find(i=>i.id===id);
-  if (inv) { inv.status = '일반'; saveDB(); renderInventory(); toast('재고 복구 완료'); }
+  if (inv) { inv.status = '일반'; saveDB('inventory'); renderInventory(); toast('재고 복구 완료'); }
 }
 
 // 현재 조회 중인 판매 데이터 (필터 적용 후)
@@ -6229,7 +6229,7 @@ function deleteInventory(id) {
   rec.deletedById = currentUser?.id;
   DB.deletedInventory.push(rec);
   DB.inventory = DB.inventory.filter(i=>i.id!==id);
-  saveDB(); renderInventory(); toast('삭제됨 (삭제재고에서 복구 가능)');
+  saveDB('inventory'); renderInventory(); toast('삭제됨 (삭제재고에서 복구 가능)');
 }
 
 
@@ -6745,7 +6745,7 @@ function saveEditInventory() {
   inv.type = document.getElementById('ie-type').value;
   inv.date = document.getElementById('ie-date').value;
   inv.serial = document.getElementById('ie-serial-edit').value;
-  saveDB(); closeModal('inv-edit'); renderInventory(); toast('재고 수정 완료');
+  saveDB('inventory'); closeModal('inv-edit'); renderInventory(); toast('재고 수정 완료');
 }
 
 function sellFromInventory() {
@@ -6927,7 +6927,7 @@ function saveBulkSale() {
     count++;
   });
   if (!count) { toast('등록할 항목이 없습니다','error'); return; }
-  saveDB(); closeModal('bulk-sale'); renderInventory(); renderSales();
+  saveDB('inventory'); closeModal('bulk-sale'); renderInventory(); renderSales();
   toast(`${count}건 판매등록 완료`);
   // 거래처별로 그룹핑해서 영수증 출력 여부 묻기
   const partnerIds = [...new Set(savedSales.map(s=>s.partnerId))];
@@ -7234,7 +7234,7 @@ function restoreDeletedInventory(id) {
   delete inv.deletedAt;
   DB.inventory.push(inv);
   DB.deletedInventory = DB.deletedInventory.filter(i=>i.id!==id);
-  saveDB(); renderDeletedInventory(); toast('재고 복구 완료');
+  saveDB('inventory'); renderDeletedInventory(); toast('재고 복구 완료');
 }
 
 // ── 반납재고 ───────────────────────────────────────────────
@@ -7279,7 +7279,7 @@ function saveReturn() {
     invId
   });
   inv.status = '반납';
-  saveDB(); closeModal('return'); renderReturnedInventory(); toast('반납 처리 완료');
+  saveDB('inventory'); closeModal('return'); renderReturnedInventory(); toast('반납 처리 완료');
 }
 
 function restoreFromReturn(id) {
@@ -7289,7 +7289,7 @@ function restoreFromReturn(id) {
   const inv = DB.inventory.find(i=>i.id===r.invId);
   if (inv) inv.status = '일반';
   DB.returned = DB.returned.filter(x=>x.id!==id);
-  saveDB(); renderReturnedInventory(); toast('재고 복구 완료');
+  saveDB('inventory'); renderReturnedInventory(); toast('재고 복구 완료');
 }
 
 // ── 재고조사 ───────────────────────────────────────────────
@@ -7300,7 +7300,7 @@ function initAudit() {
     unchecked: DB.inventory.filter(i=>i.status!=='판매'&&i.status!=='반납').map(i=>i.id),
     checked: []
   };
-  saveDB(); renderAudit(); toast('재고조사 초기화 완료 — 총 ' + DB.auditState.unchecked.length + '개');
+  saveDB('inventory'); renderAudit(); toast('재고조사 초기화 완료 — 총 ' + DB.auditState.unchecked.length + '개');
 }
 
 function renderAudit() {
@@ -7424,7 +7424,7 @@ function confirmPresent() {
     DB.auditState.unchecked = DB.auditState.unchecked.filter(id=>id!==cb.dataset.id);
     if (!DB.auditState.checked.includes(cb.dataset.id)) DB.auditState.checked.push(cb.dataset.id);
   });
-  saveDB(); renderAudit(); toast(checked.length + '개 재고있음 확인 처리');
+  saveDB('inventory'); renderAudit(); toast(checked.length + '개 재고있음 확인 처리');
 }
 
 function filterAuditList(type, q) {
@@ -10289,7 +10289,7 @@ function deleteSelectedInventory() {
   // 재고에서 제거
   DB.inventory = DB.inventory.filter(i => !ids.has(String(i.id)));
 
-  saveDB();
+  saveDB('inventory');
   renderInventory();
   toast(`🗑 ${toDelete.length}개 삭제 완료 (삭제재고에서 복구 가능)`);
 }
