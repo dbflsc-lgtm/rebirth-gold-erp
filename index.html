@@ -3497,12 +3497,12 @@ const DEFAULT_ADMIN = { id:'admin', name:'관리자', pw:'rebirth1234', role:'ad
 let DB = { catalog:[], inventory:[], sales:[], orders:[], rental:[], partners:[], goldprices:[], accounts:[], permissions:{}, returned:[], auditState:null, cashLedger:[], goldLedger:[], settlements:[], goldPurchases:[], customerDeals:[] };
 let currentUser = null; // { id, name, role }
 
-function saveDB() {
+function saveDB(key) {
   // localStorage 즉시 저장 (빠른 응답)
   try { localStorage.setItem('rg-erp', JSON.stringify(DB)); } catch(e) {}
   // Firebase 클라우드 저장 (비동기)
-  if (window._fbReady && window._fbSave) {
-    window._fbSave(DB).then(ok => {
+  if (window._fbReady) {
+    const showStatus = (ok) => {
       const el = document.getElementById('fb-sync-status');
       if (el) {
         if (ok) {
@@ -3513,7 +3513,13 @@ function saveDB() {
           el.style.color = '#c0392b';
         }
       }
-    });
+    };
+    // key 지정 시 해당 컬렉션만 저장 (멀티기기 덮어쓰기 방지)
+    if (key && window._fbSaveKey) {
+      window._fbSaveKey(key, DB[key]).then(showStatus);
+    } else if (window._fbSave) {
+      window._fbSave(DB).then(showStatus);
+    }
   }
 }
 async function loadDBFromFirebase() {
@@ -4661,7 +4667,7 @@ function saveCatalog() {
         updatedBy: currentUser?.id, updatedByName: currentUser?.name, updatedAt: today()
       };
       clearPhoto();
-      saveDB(); closeModal('catalog'); renderCatalog();
+      saveDB('catalog'); closeModal('catalog'); renderCatalog();
       toast('✅ 카탈로그 수정 완료');
     }
   } else {
@@ -4672,7 +4678,7 @@ function saveCatalog() {
       createdBy: currentUser?.id, createdByName: currentUser?.name, createdAt: today()
     });
     clearPhoto();
-    saveDB(); closeModal('catalog'); renderCatalog();
+    saveDB('catalog'); closeModal('catalog'); renderCatalog();
     toast('카탈로그 등록 완료');
   }
 }
@@ -6211,7 +6217,7 @@ function deleteCatalog(id) {
   const rec = DB.catalog.find(c=>c.id===id);
   if (!canDelete('catalog', rec)) { toast('삭제 권한이 없습니다','error'); return; }
   if (!confirm('삭제하시겠습니까?')) return;
-  DB.catalog = DB.catalog.filter(c=>c.id!==id); saveDB(); renderCatalog(); toast('삭제됨');
+  DB.catalog = DB.catalog.filter(c=>c.id!==id); saveDB('catalog'); renderCatalog(); toast('삭제됨');
 }
 function deleteInventory(id) {
   const rec = DB.inventory.find(i=>i.id===id);
