@@ -68,14 +68,8 @@
   // 배열을 청크 단위로 분할 저장 (문서당 500개)
   async function saveCollection(colName, arr) {
     if (!Array.isArray(arr)) return true;
-    // 기존 문서 목록 가져와서 삭제 (청크 재생성)
-    const existing = await fsListDocs(colName);
-    for (const doc of existing) {
-      const docId = doc.name.split('/').pop();
-      await fsDelete(`${colName}/${docId}`);
-    }
-    // 500개씩 청크로 저장
-    const CHUNK = 500;
+    const CHUNK = 150;
+    const newChunkCount = Math.ceil(arr.length / CHUNK) || 1;
     for (let i = 0; i < arr.length; i += CHUNK) {
       const chunk = arr.slice(i, i + CHUNK);
       const chunkId = 'chunk_' + Math.floor(i / CHUNK);
@@ -83,6 +77,14 @@
         data:  { stringValue: JSON.stringify(chunk) },
         index: { integerValue: String(Math.floor(i / CHUNK)) }
       });
+    }
+    const existing = await fsListDocs(colName);
+    for (const doc of existing) {
+      const docId = doc.name.split('/').pop();
+      const chunkNum = parseInt(docId.replace('chunk_', ''));
+      if (!isNaN(chunkNum) && chunkNum >= newChunkCount) {
+        await fsDelete(`${colName}/${docId}`);
+      }
     }
     return true;
   }
