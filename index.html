@@ -69,8 +69,17 @@
   async function saveCollection(colName, arr) {
     if (!Array.isArray(arr)) return true;
     const CHUNK = 150;
-    for (let i = 0; i < arr.length; i += CHUNK) {
-      const chunk = arr.slice(i, i + CHUNK);
+    // catalog 저장 시 base64 사진 제거 (1MB 초과 방지)
+    const cleanArr = colName === 'erp_catalog'
+      ? arr.map(item => {
+          if (item.photo && item.photo.startsWith('data:image')) {
+            return {...item, photo: null};
+          }
+          return item;
+        })
+      : arr;
+    for (let i = 0; i < cleanArr.length; i += CHUNK) {
+      const chunk = cleanArr.slice(i, i + CHUNK);
       const chunkId = 'chunk_' + Math.floor(i / CHUNK);
       await fsPatch(`${colName}/${chunkId}`, {
         data:  { stringValue: JSON.stringify(chunk) },
