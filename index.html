@@ -68,24 +68,18 @@
         try {
           const docId = doc.name.split('/').pop();
           const r = await fetch(`${BASE_URL}/${collection}/${docId}?key=${API_KEY}`);
-          if (r.ok) {
-            const d = await r.json();
-            result.push(d);
-          }
+          if (r.ok) result.push(await r.json());
         } catch(e) {}
       }
       return result;
-    } catch(e) {
-      return [];
-    }
+    } catch(e) { return []; }
   }
 
-  // 배열을 청크 단위로 분할 저장 (새 청크 먼저 저장 후 잉여만 삭제 → 데이터 소실 방지)
+  // 배열을 청크 단위로 분할 저장 (새 청크 먼저 저장 후 잉여만 삭제)
   async function saveCollection(colName, arr) {
     if (!Array.isArray(arr)) return true;
-    const CHUNK = 500;
+    const CHUNK = 150;
     const newChunkCount = Math.ceil(arr.length / CHUNK) || 1;
-    // 1. 새 청크 먼저 저장
     for (let i = 0; i < arr.length; i += CHUNK) {
       const chunk = arr.slice(i, i + CHUNK);
       const chunkId = 'chunk_' + Math.floor(i / CHUNK);
@@ -94,7 +88,6 @@
         index: { integerValue: String(Math.floor(i / CHUNK)) }
       });
     }
-    // 2. 기존 청크 중 잉여분만 삭제
     const existing = await fsListDocs(colName);
     for (const doc of existing) {
       const docId = doc.name.split('/').pop();
@@ -107,26 +100,22 @@
   }
 
   async function loadCollection(colName) {
-    try {
-      const docs = await fsListDocs(colName);
-      if (!docs.length) return [];
-      docs.sort((a, b) => {
-        const ai = parseInt(a.fields?.index?.integerValue || 0);
-        const bi = parseInt(b.fields?.index?.integerValue || 0);
-        return ai - bi;
-      });
-      let arr = [];
-      for (const doc of docs) {
-        try {
-          const chunk = JSON.parse(doc.fields?.data?.stringValue || '[]');
-          arr = arr.concat(chunk);
-        } catch(e) {}
-      }
-      return arr;
-    } catch(e) {
-      console.error('loadCollection error:', colName, e);
-      return [];
+    const docs = await fsListDocs(colName);
+    if (!docs.length) return [];
+    // index 순서로 정렬
+    docs.sort((a, b) => {
+      const ai = parseInt(a.fields?.index?.integerValue || 0);
+      const bi = parseInt(b.fields?.index?.integerValue || 0);
+      return ai - bi;
+    });
+    let arr = [];
+    for (const doc of docs) {
+      try {
+        const chunk = JSON.parse(doc.fields?.data?.stringValue || '[]');
+        arr = arr.concat(chunk);
+      } catch(e) {}
     }
+    return arr;
   }
 
   // 전체 DB 저장 (병렬 처리)
@@ -190,7 +179,6 @@
     }
   };
 
-  // 특정 키만 저장
   window._fbSaveKey = async function(key, value) {
     try {
       const colName = COLLECTIONS[key];
@@ -200,14 +188,10 @@
         await fsPatch('erp/meta', { [key]: { stringValue: JSON.stringify(value) } });
       }
       return true;
-    } catch(e) {
-      console.error('_fbSaveKey error:', e);
-      return false;
-    }
+    } catch(e) { console.error('_fbSaveKey error:', e); return false; }
   };
-
   window._fbReady = true;
-  window._fbInit = async function() { return true; }; // API Key 방식은 Auth 불필요
+  window._fbInit = async function() { return true; };
   console.log('✅ Firebase REST API v3 준비됨 (컬렉션 분산 + API Key)');
 })();
 </script>
@@ -3356,9 +3340,7 @@ let DB = { catalog:[], inventory:[], sales:[], orders:[], rental:[], partners:[]
 let currentUser = null; // { id, name, role }
 
 function saveDB(changedKey) {
-  // localStorage 즉시 저장
   try { localStorage.setItem('rg-erp', JSON.stringify(DB)); } catch(e) {}
-  // Firebase: changedKey 지정 시 해당 컬렉션만, 없으면 전체
   if (window._fbReady && window._fbSave) {
     const savePromise = changedKey
       ? window._fbSaveKey(changedKey, DB[changedKey])
@@ -5851,7 +5833,7 @@ function confirmMatchInventory(invId) {
     o.stage = 'C';
   }
 
-  saveDB('sales');
+  saveDB();
   closeMatchInventoryModal();
   renderOrders();
   renderInventory();
@@ -6184,7 +6166,7 @@ function saveSalePayment() {
     });
   }
 
-  saveDB('sales');
+  saveDB();
   closeSalePaymentModal();
   renderSales();
   if (typeof renderCashLedger === 'function') renderCashLedger();
@@ -6273,7 +6255,7 @@ function saveEditPartner() {
     });
   }
 
-  saveDB('partners');
+  saveDB();
   closeModal('edit-partner');
   renderPartners();
   if (nameChanged) {
@@ -6644,7 +6626,7 @@ function saveReturnSale() {
     toast('판매 반품 완료');
   }
 
-  saveDB('sales');
+  saveDB();
   closeModal('return-sale');
   renderSales();
   renderInventory();
@@ -6885,7 +6867,7 @@ function initAudit() {
     unchecked: DB.inventory.filter(i=>i.status!=='판매'&&i.status!=='반납').map(i=>i.id),
     checked: []
   };
-  saveDB('auditState'); renderAudit(); toast('재고조사 초기화 완료 — 총 ' + DB.auditState.unchecked.length + '개');
+  saveDB(); renderAudit(); toast('재고조사 초기화 완료 — 총 ' + DB.auditState.unchecked.length + '개');
 }
 
 function renderAudit() {
@@ -6987,7 +6969,7 @@ function markChecked(invId) {
   if (!DB.auditState) return;
   DB.auditState.unchecked = DB.auditState.unchecked.filter(id=>id!==invId);
   if (!DB.auditState.checked.includes(invId)) DB.auditState.checked.push(invId);
-  saveDB('auditState');
+  saveDB();
   renderAudit();
   // 검사완료 목록 맨 위로 스크롤
   const scroll = document.getElementById('audit-checked-scroll');
@@ -6998,7 +6980,7 @@ function unmarkChecked(invId) {
   if (!DB.auditState) return;
   DB.auditState.checked = DB.auditState.checked.filter(id=>id!==invId);
   if (!DB.auditState.unchecked.includes(invId)) DB.auditState.unchecked.unshift(invId);
-  saveDB('auditState'); renderAudit();
+  saveDB(); renderAudit();
 }
 
 function confirmPresent() {
@@ -7009,7 +6991,7 @@ function confirmPresent() {
     DB.auditState.unchecked = DB.auditState.unchecked.filter(id=>id!==cb.dataset.id);
     if (!DB.auditState.checked.includes(cb.dataset.id)) DB.auditState.checked.push(cb.dataset.id);
   });
-  saveDB('auditState'); renderAudit(); toast(checked.length + '개 재고있음 확인 처리');
+  saveDB(); renderAudit(); toast(checked.length + '개 재고있음 확인 처리');
 }
 
 function filterAuditList(type, q) {
@@ -7194,7 +7176,7 @@ function saveBulkInventory() {
 
   if (registeredCount === 0) { toast('중량을 입력해주세요','error'); return; }
 
-  saveDB('inventory');
+  saveDB();
   closeModal('bulk-inventory');
   renderOrders();
   renderInventory();
@@ -7219,7 +7201,7 @@ function doLogin() {
   acct.lastLogin = new Date().toISOString().slice(0,16).replace('T',' ');
   // 세션 유지 — 새로고침해도 로그인 상태 유지
   try { sessionStorage.setItem('rg-session', JSON.stringify(currentUser)); } catch(e) {}
-  saveDB('inventory');
+  saveDB();
   document.getElementById('login-screen').style.display = 'none';
   document.getElementById('sidebar').style.display = 'flex';
   document.getElementById('main').style.display = 'flex';
@@ -7610,7 +7592,7 @@ function renderCashLedger() {
     <span style="font-size:12px;color:var(--text2)">입금 <b>${fmt(totalIn)}</b>원 &nbsp;|&nbsp; 출금 <b>${fmt(totalOut)}</b>원 &nbsp;|&nbsp; 순증감 <b style="color:${net>=0?'var(--success)':'var(--danger)'}>${fmt(net)}</b>원</span>
     <span style="font-size:12px;color:var(--text3)">현재잔액 ${fmt(curBal)}원</span>
   `;
-  saveDB('cashLedger');
+  saveDB();
 }
 
 // 권종 수량 입력 시 실시간 합계 계산 및 금액 자동입력
@@ -7848,7 +7830,7 @@ function renderGoldLedger() {
     <span style="font-size:12px;color:var(--text2)">입고(순금) <b>${totalIn.toFixed(3)}g</b> &nbsp;|&nbsp; 출고(순금) <b>${totalOut.toFixed(3)}g</b> &nbsp;|&nbsp; 순증감 <b style="color:${net>=0?'var(--success)':'var(--danger)'}">${net.toFixed(3)}g</b></span>
     <span style="font-size:12px;color:var(--text3)">현재잔량(순금) ${curBal.toFixed(3)}g</span>
   `;
-  saveDB('goldLedger');
+  saveDB();
 }
 
 function openGoldModal(id) {
@@ -8021,7 +8003,7 @@ function closeCashDay() {
   if (!DB.cashClosedDates) DB.cashClosedDates = [];
   if (!DB.cashClosedDates.includes(date)) DB.cashClosedDates.push(date);
 
-  saveDB('cashLedger');
+  saveDB();
   renderCashLedger();
   toast(date + ' 마감완료 — 잔액 ' + fmt(runBal) + '원');
 }
@@ -8653,7 +8635,7 @@ function saveSettle() {
     createdAt: new Date().toLocaleString('ko-KR',{year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'})
   };
   DB.settlements.push(settlement);
-  saveDB('settlements');
+  saveDB();
   closeSettleModal();
   renderSales();
   renderUnpaid();
@@ -8754,7 +8736,7 @@ function closeGoldDay() {
   }
   if (!DB.goldClosedDates.includes(date)) DB.goldClosedDates.push(date);
 
-  saveDB('goldLedger');
+  saveDB();
   renderGoldLedger();
   toast(date + ' 금시재 마감완료 — 잔량 ' + runBal.toFixed(2) + 'g');
 }
@@ -8780,7 +8762,7 @@ function reopenCashDay() {
   // 잠금 날짜 해제
   DB.cashClosedDates = DB.cashClosedDates.filter(d => d !== date);
 
-  saveDB('cashLedger');
+  saveDB();
   renderCashLedger();
   toast(date + ' 마감 취소 완료');
 }
@@ -8798,7 +8780,7 @@ function reopenGoldDay() {
   DB.goldLedger = DB.goldLedger.filter(r => !(r.type === 'close' && r.date === date));
   DB.goldClosedDates = DB.goldClosedDates.filter(d => d !== date);
 
-  saveDB('goldLedger');
+  saveDB();
   renderGoldLedger();
   toast(date + ' 금시재 마감 취소 완료');
 }
@@ -9070,7 +9052,7 @@ function importPartnersFromExcel() {
     added++;
   });
 
-  saveDB('partners');
+  saveDB();
   renderPartners();
   toast('✅ 매입처 등록 완료 — ' + added + '개 추가, ' + skipped + '개 중복 건너뜀');
 }
@@ -9171,7 +9153,7 @@ function importInventoryFromExcelFile(input) {
         added++;
       });
 
-      saveDB('inventory');
+      saveDB();
       renderInventory();
       input.value = ''; // 같은 파일 재업로드 가능하게
       toast(`✅ 엑셀 업로드 완료 — ${added}개 추가, ${skipped}개 중복 건너뜀${invalid?' (빈행 '+invalid+'개 제외)':''}`);
@@ -9406,7 +9388,7 @@ function saveGoldPurchase() {
     });
   }
 
-  saveDB('goldPurchases');
+  saveDB();
   closeGoldPurchaseModal();
   renderGoldPurchase();
   toast(`✅ 고금매입 등록 완료 — 현금시재${(process==='material'||process==='refinery')?'·금시재':''} 자동 연동됨`);
@@ -9677,7 +9659,7 @@ function saveChangePw() {
   acct.pw = newPw;
   acct.pwChangedAt = today();
   acct.mustChangePw = false; // 임시비번 강제변경 해제
-  saveDB('accounts');
+  saveDB();
   closeChangePwModal();
   toast('✅ 비밀번호가 변경되었습니다');
   renderDashboard();
@@ -9693,7 +9675,7 @@ function adminResetPw(targetId, targetName) {
   acct.pw = tempPw;
   acct.pwResetAt = today();
   acct.pwResetBy = currentUser?.name;
-  saveDB('accounts');
+  saveDB();
   toast(`✅ ${targetName} 임시 비밀번호: ${tempPw}`);
   // 알림 유지
   setTimeout(()=>alert(`[${targetName}] 임시 비밀번호\n\n${tempPw}\n\n직원에게 전달 후 본인이 변경하도록 안내하세요.`), 500);
@@ -9822,7 +9804,7 @@ function saveTempPw() {
   acct.mustChangePw = true;
   acct.pwResetAt = nowStr ? nowStr() : today();
   acct.pwResetBy = currentUser?.name;
-  saveDB('accounts');
+  saveDB();
   modal.style.display = 'none';
   toast(`✅ [${targetName}] 임시 비밀번호: ${tempPw} — 직원에게 전달해주세요`);
 }
@@ -9874,7 +9856,7 @@ function deleteSelectedInventory() {
   // 재고에서 제거
   DB.inventory = DB.inventory.filter(i => !ids.has(String(i.id)));
 
-  saveDB('inventory');
+  saveDB();
   renderInventory();
   toast(`🗑 ${toDelete.length}개 삭제 완료 (삭제재고에서 복구 가능)`);
 }
