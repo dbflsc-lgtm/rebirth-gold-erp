@@ -169,8 +169,19 @@
     }
   };
 
+  window._fbSaveKey = async function(key, value) {
+    try {
+      const colName = COLLECTIONS[key];
+      if (colName) {
+        await saveCollection(colName, Array.isArray(value) ? value : []);
+      } else if (['permissions','auditState','cashClosedDates','goldClosedDates'].includes(key)) {
+        await fsPatch('erp/meta', { [key]: { stringValue: JSON.stringify(value) } });
+      }
+      return true;
+    } catch(e) { console.error('_fbSaveKey error:', e); return false; }
+  };
   window._fbReady = true;
-  window._fbInit = async function() { return true; }; // API Key 방식은 Auth 불필요
+  window._fbInit = async function() { return true; };
   console.log('✅ Firebase REST API v3 준비됨 (컬렉션 분산 + API Key)');
 })();
 </script>
