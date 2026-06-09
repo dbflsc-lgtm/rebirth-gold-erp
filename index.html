@@ -12,6 +12,9 @@
 (function() {
   const API_KEY    = 'AIzaSyAw6-FH1Q17ZONRiOjyEX7u_SbQQHIUmIA';
   const PROJECT_ID = 'rebirth-gold';
+  // Storage 업로드에서 접근 가능하도록 전역 노출
+  window._RG_API_KEY    = API_KEY;
+  window._RG_PROJECT_ID = PROJECT_ID;
   const BASE_URL   = 'https://firestore.googleapis.com/v1/projects/' + PROJECT_ID + '/databases/(default)/documents';
 
   // 컬렉션별 분산 저장 (1MB 한도 해결)
@@ -4464,19 +4467,55 @@ function loadPhotoFromUrl() {
   img.src = url;
 }
 
-function previewPhoto(input) {
+async function uploadToStorage(file) {
+  const API_KEY    = window._RG_API_KEY;
+  const PROJECT_ID = window._RG_PROJECT_ID;
+  const ext  = file.name.split('.').pop().toLowerCase() || 'jpg';
+  const name = 'catalog/' + Date.now() + '_' + Math.random().toString(36).slice(2) + '.' + ext;
+  const encoded = encodeURIComponent(name);
+  const uploadUrl = `https://firebasestorage.googleapis.com/v0/b/${PROJECT_ID}.firebasestorage.app/o?uploadType=media&name=${encoded}&key=${API_KEY}`;
+  const res = await fetch(uploadUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': file.type || 'image/jpeg' },
+    body: file
+  });
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error('Storage 업로드 실패: ' + err);
+  }
+  const json = await res.json();
+  // 다운로드 URL 조합
+  const downloadUrl = `https://firebasestorage.googleapis.com/v0/b/${json.bucket}/o/${encoded}?alt=media&token=${json.downloadTokens}`;
+  return downloadUrl;
+}
+
+async function previewPhoto(input) {
   if (!input.files || !input.files[0]) return;
+  const file = input.files[0];
+  const img     = document.getElementById('photo-img');
+  const preview = document.getElementById('photo-preview');
+  const lbl     = document.getElementById('photo-source-label');
+
+  // 먼저 로컬 미리보기
   const reader = new FileReader();
   reader.onload = e => {
-    currentPhotoData = e.target.result;
-    const img     = document.getElementById('photo-img');
-    const preview = document.getElementById('photo-preview');
-    img.src = currentPhotoData;
+    img.src = e.target.result;
     preview.style.display = 'block';
-    const lbl = document.getElementById('photo-source-label');
-    if (lbl) lbl.textContent = '📁 파일 업로드됨';
+    if (lbl) lbl.textContent = '⏫ Storage 업로드 중...';
   };
-  reader.readAsDataURL(input.files[0]);
+  reader.readAsDataURL(file);
+
+  // Storage 업로드
+  try {
+    const url = await uploadToStorage(file);
+    currentPhotoData = url;
+    img.src = url;
+    if (lbl) lbl.textContent = '✅ Storage 업로드 완료';
+  } catch(e) {
+    console.error(e);
+    if (lbl) lbl.textContent = '❌ 업로드 실패: ' + e.message;
+    currentPhotoData = null;
+  }
 }
 
 function clearPhoto() {
