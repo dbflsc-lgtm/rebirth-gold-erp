@@ -58,10 +58,26 @@
   }
 
   async function fsListDocs(collection) {
-    const res = await fetch(`${BASE_URL}/${collection}?key=${API_KEY}&pageSize=500`);
-    if (!res.ok) return [];
-    const json = await res.json();
-    return json.documents || [];
+    try {
+      const res = await fetch(`${BASE_URL}/${collection}?key=${API_KEY}&pageSize=100`);
+      if (!res.ok) return [];
+      const json = await res.json();
+      const docs = json.documents || [];
+      const result = [];
+      for (const doc of docs) {
+        try {
+          const docId = doc.name.split('/').pop();
+          const r = await fetch(`${BASE_URL}/${collection}/${docId}?key=${API_KEY}`);
+          if (r.ok) {
+            const d = await r.json();
+            result.push(d);
+          }
+        } catch(e) {}
+      }
+      return result;
+    } catch(e) {
+      return [];
+    }
   }
 
   // 배열을 청크 단위로 분할 저장 (새 청크 먼저 저장 후 잉여만 삭제 → 데이터 소실 방지)
