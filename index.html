@@ -69,7 +69,6 @@
   async function saveCollection(colName, arr) {
     if (!Array.isArray(arr)) return true;
     const CHUNK = 150;
-    const newChunkCount = Math.ceil(arr.length / CHUNK) || 1;
     for (let i = 0; i < arr.length; i += CHUNK) {
       const chunk = arr.slice(i, i + CHUNK);
       const chunkId = 'chunk_' + Math.floor(i / CHUNK);
@@ -77,14 +76,6 @@
         data:  { stringValue: JSON.stringify(chunk) },
         index: { integerValue: String(Math.floor(i / CHUNK)) }
       });
-    }
-    const existing = await fsListDocs(colName);
-    for (const doc of existing) {
-      const docId = doc.name.split('/').pop();
-      const chunkNum = parseInt(docId.replace('chunk_', ''));
-      if (!isNaN(chunkNum) && chunkNum >= newChunkCount) {
-        await fsDelete(`${colName}/${docId}`);
-      }
     }
     return true;
   }
