@@ -81,6 +81,8 @@
           return item;
         })
       : arr;
+    const newChunkCount = Math.ceil(cleanArr.length / CHUNK) || 0;
+    // 새 청크 저장
     for (let i = 0; i < cleanArr.length; i += CHUNK) {
       const chunk = cleanArr.slice(i, i + CHUNK);
       const chunkId = 'chunk_' + Math.floor(i / CHUNK);
@@ -88,6 +90,19 @@
         data:  { stringValue: JSON.stringify(chunk) },
         index: { integerValue: String(Math.floor(i / CHUNK)) }
       });
+    }
+    // 빈 배열이면 chunk_0도 명시적으로 빈 배열로 저장
+    if (cleanArr.length === 0) {
+      await fsPatch(`${colName}/chunk_0`, {
+        data:  { stringValue: '[]' },
+        index: { integerValue: '0' }
+      });
+    }
+    // 초과 청크 삭제 (이전보다 청크 수가 줄었을 때)
+    for (let i = newChunkCount; i < newChunkCount + 10; i++) {
+      const res = await fetch(`${BASE_URL}/${colName}/chunk_${i}?key=${API_KEY}`);
+      if (!res.ok) break; // 없으면 중단
+      await fetch(`${BASE_URL}/${colName}/chunk_${i}?key=${API_KEY}`, { method: 'DELETE' });
     }
     return true;
   }
