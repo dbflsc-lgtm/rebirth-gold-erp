@@ -8473,6 +8473,7 @@ function saveGoldEntry() {
   } else {
     DB.goldLedger.push(entry);
   }
+  saveDB('goldLedger');
   closeGoldModal();
   const glFilterEl2 = document.getElementById('gl-date-filter');
   if (glFilterEl2) glFilterEl2.value = entry.date;
@@ -8485,6 +8486,7 @@ function deleteGoldEntry(id) {
   if (row && goldDateLocked(row.date)) { toast('마감된 날짜는 삭제할 수 없습니다', 'error'); return; }
   if (!confirm('이 내역을 삭제하시겠습니까?')) return;
   DB.goldLedger = DB.goldLedger.filter(r=>r.id!==id);
+  saveDB('goldLedger');
   renderGoldLedger();
   toast('삭제되었습니다');
 }
@@ -9333,7 +9335,7 @@ function closeGoldDay() {
   }
   if (!DB.goldClosedDates.includes(date)) DB.goldClosedDates.push(date);
 
-  saveDB();
+  saveDB('goldLedger');
   renderGoldLedger();
   toast(date + ' 금시재 마감완료 — 잔량 ' + runBal.toFixed(2) + 'g');
 }
@@ -9377,7 +9379,7 @@ function reopenGoldDay() {
   DB.goldLedger = DB.goldLedger.filter(r => !(r.type === 'close' && r.date === date));
   DB.goldClosedDates = DB.goldClosedDates.filter(d => d !== date);
 
-  saveDB();
+  saveDB('goldLedger');
   renderGoldLedger();
   toast(date + ' 금시재 마감 취소 완료');
 }
