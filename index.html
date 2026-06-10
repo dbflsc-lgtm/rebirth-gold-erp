@@ -112,11 +112,15 @@
   }
 
   // 전체 DB 저장 (병렬 처리)
+  // 전체 saveDB()에서 제외할 컬렉션 (개별 saveDB('key')로만 저장)
+  const INDIVIDUAL_SAVE_ONLY = new Set(['inventory', 'catalog', 'deletedInventory', 'returned']);
+
   window._fbSave = async function(data) {
     try {
       const tasks = [];
-      // 대용량 컬렉션 병렬 저장
+      // 대용량 컬렉션 병렬 저장 (개별 저장 전용 컬렉션 제외)
       for (const [key, col] of Object.entries(COLLECTIONS)) {
+        if (INDIVIDUAL_SAVE_ONLY.has(key)) continue;
         if (data[key] !== undefined) tasks.push(saveCollection(col, data[key]));
       }
       // 소용량 메타 데이터
@@ -3498,8 +3502,15 @@ let DB = { catalog:[], inventory:[], sales:[], orders:[], rental:[], partners:[]
 let currentUser = null; // { id, name, role }
 
 function saveDB(key) {
-  // localStorage 즉시 저장 (빠른 응답)
-  try { localStorage.setItem('rg-erp', JSON.stringify(DB)); } catch(e) {}
+  // localStorage 저장 (inventory/catalog 등 대용량은 Firebase 단독 관리 — 덮어쓰기 방지)
+  try {
+    const LOCAL_EXCLUDE = new Set(['inventory','catalog','deletedInventory','returned']);
+    const toStore = {};
+    for (const k of Object.keys(DB)) {
+      if (!LOCAL_EXCLUDE.has(k)) toStore[k] = DB[k];
+    }
+    localStorage.setItem('rg-erp', JSON.stringify(toStore));
+  } catch(e) {}
   // Firebase 클라우드 저장 (비동기)
   if (window._fbReady) {
     const showStatus = (ok) => {
