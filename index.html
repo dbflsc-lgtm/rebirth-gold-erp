@@ -1341,6 +1341,12 @@
           <tbody id="accounts-body"></tbody>
         </table>
       </div>
+      <div class="table-wrap" style="margin-top:24px">
+        <div class="table-header">
+          <span style="font-size:13px;color:var(--text2)">☁ 자동 백업 · 복원</span>
+        </div>
+        <div id="backup-panel" style="padding:16px"></div>
+      </div>
     </div>
 
     <!-- Permissions -->
@@ -3560,6 +3566,8 @@ async function loadDBFromFirebase() {
       // localStorage도 업데이트
       try { localStorage.setItem('rg-erp', JSON.stringify(DB)); } catch(e) {}
       console.log('✅ Firebase에서 데이터 로드됨');
+      // 자동 백업 (하루 한 번)
+      setTimeout(autoBackupToStorage, 3000);
       return true;
     }
   } catch(e) { console.error('Firebase load failed:', e); }
@@ -4519,6 +4527,102 @@ async function uploadToStorage(file) {
   // 다운로드 URL 조합
   const downloadUrl = `https://firebasestorage.googleapis.com/v0/b/${json.bucket}/o/${encoded}?alt=media&token=${json.downloadTokens}`;
   return downloadUrl;
+}
+
+// ── 자동 백업 (Firebase Storage) ─────────────────────────────
+async function autoBackupToStorage() {
+  try {
+    const API_KEY    = window._RG_API_KEY;
+    const PROJECT_ID = window._RG_PROJECT_ID;
+    const today = new Date().toISOString().slice(0,10); // YYYY-MM-DD
+
+    // 오늘 이미 백업했으면 스킵
+    const lastBackup = localStorage.getItem('rg-last-backup');
+    if (lastBackup === today) return;
+
+    // 전체 DB 로드 (Firebase 최신본)
+    const fullDB = await window._fbLoad();
+    if (!fullDB) return;
+
+    // JSON → Blob → Storage 업로드
+    const json = JSON.stringify(fullDB);
+    const blob = new Blob([json], { type: 'application/json' });
+    const name = `backup/${today}.json`;
+    const encoded = encodeURIComponent(name);
+    const uploadUrl = `https://firebasestorage.googleapis.com/v0/b/${PROJECT_ID}.firebasestorage.app/o?uploadType=media&name=${encoded}&key=${API_KEY}`;
+    const res = await fetch(uploadUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: blob
+    });
+    if (!res.ok) return;
+
+    // 오늘 백업 날짜 저장
+    localStorage.setItem('rg-last-backup', today);
+
+    // 7일 이전 백업 삭제
+    const old7 = new Date(Date.now() - 8 * 86400000).toISOString().slice(0,10);
+    const oldName = encodeURIComponent(`backup/${old7}.json`);
+    fetch(`https://firebasestorage.googleapis.com/v0/b/${PROJECT_ID}.firebasestorage.app/o/${oldName}?key=${API_KEY}`, { method: 'DELETE' }).catch(()=>{});
+
+    // 상태 표시
+    const el = document.getElementById('fb-sync-status');
+    if (el) {
+      el.textContent = '☁ 저장됨 · 백업완료 ' + today;
+      el.style.color = '#1a7a40';
+    }
+    console.log('✅ 자동 백업 완료:', today);
+  } catch(e) {
+    console.warn('자동 백업 실패:', e);
+  }
+}
+
+async function restoreFromBackup(dateStr) {
+  try {
+    const API_KEY    = window._RG_API_KEY;
+    const PROJECT_ID = window._RG_PROJECT_ID;
+    const name = encodeURIComponent(`backup/${dateStr}.json`);
+    // 토큰 없이 읽기 가능하도록 Storage 규칙이 허용돼야 함
+    // → 먼저 메타데이터로 토큰 조회
+    const metaRes = await fetch(`https://firebasestorage.googleapis.com/v0/b/${PROJECT_ID}.firebasestorage.app/o/${name}?key=${API_KEY}`);
+    if (!metaRes.ok) { alert('해당 날짜 백업이 없습니다.'); return; }
+    const meta = await metaRes.json();
+    const token = meta.downloadTokens;
+    const dlUrl = `https://firebasestorage.googleapis.com/v0/b/${PROJECT_ID}.firebasestorage.app/o/${name}?alt=media&token=${token}`;
+    const dataRes = await fetch(dlUrl);
+    if (!dataRes.ok) { alert('백업 파일을 불러올 수 없습니다.'); return; }
+    const restored = await dataRes.json();
+    if (!confirm(`${dateStr} 백업으로 복원하시겠습니까?
+현재 데이터가 덮어씌워집니다.`)) return;
+    await window._fbSave(restored);
+    localStorage.removeItem('rg-erp');
+    alert('복원 완료! 페이지를 새로고침합니다.');
+    location.reload();
+  } catch(e) {
+    alert('복원 실패: ' + e.message);
+  }
+}
+
+function renderBackupPanel() {
+  const el = document.getElementById('backup-panel');
+  if (!el) return;
+  const last = localStorage.getItem('rg-last-backup') || '없음';
+  // 최근 7일 날짜 버튼 생성
+  const days = [];
+  for (let i = 1; i <= 7; i++) {
+    const d = new Date(Date.now() - i * 86400000).toISOString().slice(0,10);
+    days.push(d);
+  }
+  el.innerHTML = `
+    <div style="margin-bottom:12px;color:var(--text2);font-size:13px">마지막 자동 백업: <b>${last}</b></div>
+    <div style="font-size:13px;margin-bottom:8px;color:var(--text2)">날짜를 선택해 복원:</div>
+    <div style="display:flex;flex-wrap:wrap;gap:8px">
+      ${days.map(d=>`<button class="btn btn-outline" style="font-size:12px;padding:4px 10px" onclick="restoreFromBackup('${d}')">${d}</button>`).join('')}
+    </div>
+    <div style="margin-top:12px">
+      <button class="btn btn-gold" onclick="autoBackupToStorage().then(()=>renderBackupPanel())">지금 백업</button>
+    </div>
+  `;
 }
 
 async function previewPhoto(input) {
@@ -7800,6 +7904,7 @@ function deleteAccount(id) {
 }
 
 function renderAccounts() {
+  renderBackupPanel();
   const body = document.getElementById('accounts-body');
   body.innerHTML = DB.accounts.map((a,i) => `
     <tr>
