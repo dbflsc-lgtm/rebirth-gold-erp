@@ -195,17 +195,41 @@
       ? arr.map(item => (item.photo && item.photo.startsWith('data:image')) ? { ...item, photo: null } : item)
       : arr;
 
-    // 1) 충돌 감지: 다른 기기가 먼저 저장했으면 중단
-    const meta = await readMeta(colName);
+    // 1) 충돌 감지: 다른 기기가 먼저 저장했으면 자동 병합 시도
+    let saveArr = cleanArr;
+    let merged = false;
+    let meta = await readMeta(colName);
     if (meta && loadedRevs[colName] !== undefined && meta.rev !== loadedRevs[colName]) {
-      console.warn(`[충돌] ${colName}: 서버 rev=${meta.rev}, 내 rev=${loadedRevs[colName]}`);
-      return { ok: false, conflict: true, col: colName };
+      console.warn(`[충돌] ${colName}: 서버 rev=${meta.rev}, 내 rev=${loadedRevs[colName]} — 자동 병합 시도`);
+      // 모든 항목에 id가 있어야 안전하게 병합 가능
+      const hasIds = (a) => a.every(it => it && typeof it === 'object' && it.id !== undefined && it.id !== null);
+      if (!hasIds(saveArr)) return { ok: false, conflict: true, col: colName };
+      try {
+        const serverArr = await loadCollection(colName); // loadedRevs를 서버 rev로 갱신
+        if (!hasIds(serverArr)) return { ok: false, conflict: true, col: colName };
+        // 병합: 서버 최신본 기반 + 이 기기의 항목 (같은 id는 이 기기 우선, 양쪽 새 항목 모두 유지)
+        const map = new Map(serverArr.map(it => [it.id, it]));
+        for (const it of saveArr) map.set(it.id, it);
+        saveArr = Array.from(map.values());
+        meta = await readMeta(colName);
+        if (meta && meta.rev !== loadedRevs[colName]) {
+          // 병합하는 사이에 또 바뀜 — 포기 (큐 덕분에 재시도하면 됨)
+          return { ok: false, conflict: true, col: colName };
+        }
+        merged = true;
+        // 메모리/화면의 DB에도 병합 결과 반영 (다음 저장에서 다시 잃지 않도록)
+        if (window._applyMergedCollection) window._applyMergedCollection(colName, saveArr);
+        console.warn(`[자동병합] ${colName}: 서버 변경분과 병합 완료 (${saveArr.length}개)`);
+      } catch(e) {
+        console.error('자동 병합 실패:', e);
+        return { ok: false, conflict: true, col: colName };
+      }
     }
 
     // 2) 청크 기록 — 하나라도 실패하면 즉시 실패 반환
-    const newChunkCount = Math.max(Math.ceil(cleanArr.length / CHUNK), 1);
+    const newChunkCount = Math.max(Math.ceil(saveArr.length / CHUNK), 1);
     for (let i = 0; i < newChunkCount; i++) {
-      const chunk = cleanArr.slice(i * CHUNK, (i + 1) * CHUNK);
+      const chunk = saveArr.slice(i * CHUNK, (i + 1) * CHUNK);
       const ok = await fsPatch(`${colName}/chunk_${i}`, {
         data:  { stringValue: JSON.stringify(chunk) },
         index: { integerValue: String(i) }
@@ -232,7 +256,7 @@
       if (!check.ok) { if (i >= oldCount) break; else continue; }
       await fsDelete(`${colName}/chunk_${i}`);
     }
-    return { ok: true };
+    return merged ? { ok: true, merged: true } : { ok: true };
   }
 
   async function loadCollection(colName) {
@@ -338,7 +362,7 @@
 
   window._fbReady = true;
   window._fbInit = async function() { return true; };
-  console.log('✅ Firebase REST v4.1 준비됨 (Auth + rev 무결성 + 저장 직렬화)');
+  console.log('✅ Firebase REST v4.2 준비됨 (Auth + rev 무결성 + 자동 병합)');
 })();
 </script>
 <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"></script>
@@ -3655,6 +3679,22 @@ const ORDER_EXTRA_PERMS = { hideMfr: '제조사 숨김' };
 const DEFAULT_ADMIN = { id:'admin', name:'관리자', pw:'rebirth1234', role:'admin', createdAt: new Date().toISOString().slice(0,10), lastLogin:'' };
 
 let DB = { catalog:[], inventory:[], sales:[], orders:[], rental:[], partners:[], goldprices:[], accounts:[], permissions:{}, returned:[], auditState:null, cashLedger:[], goldLedger:[], settlements:[], goldPurchases:[], customerDeals:[] };
+
+// 다른 기기와 충돌 시 자동 병합된 컬렉션을 메모리 DB에 반영 (Firebase 레이어에서 호출)
+const _COL_TO_KEY = { erp_catalog:'catalog', erp_inventory:'inventory', erp_sales:'sales', erp_orders:'orders', erp_rental:'rental', erp_partners:'partners', erp_goldprices:'goldprices', erp_accounts:'accounts', erp_returned:'returned', erp_deleted:'deletedInventory', erp_settlements:'settlements', erp_goldpurchases:'goldPurchases', erp_cashledger:'cashLedger', erp_customerdeals:'customerDeals', erp_goldledger:'goldLedger' };
+window._applyMergedCollection = function(colName, arr) {
+  const key = _COL_TO_KEY[colName];
+  if (!key) return;
+  DB[key] = arr;
+  try {
+    const LOCAL_EXCLUDE = new Set(['inventory','catalog','deletedInventory','returned']);
+    if (!LOCAL_EXCLUDE.has(key)) {
+      const toStore = {};
+      for (const k of Object.keys(DB)) { if (!LOCAL_EXCLUDE.has(k)) toStore[k] = DB[k]; }
+      localStorage.setItem('rg-erp', JSON.stringify(toStore));
+    }
+  } catch(e) {}
+};
 let currentUser = null; // { id, name, role }
 
 function saveDB(key) {
@@ -3673,7 +3713,10 @@ function saveDB(key) {
       const ok = r === true || (r && r.ok);
       const el = document.getElementById('fb-sync-status');
       if (el) {
-        if (ok) {
+        if (ok && r && r.merged) {
+          el.textContent = '☁ 저장됨 (다른 기기 변경과 자동 병합) ' + new Date().toLocaleTimeString('ko-KR',{hour:'2-digit',minute:'2-digit'});
+          el.style.color = '#1a7a40';
+        } else if (ok) {
           el.textContent = '☁ 저장됨 ' + new Date().toLocaleTimeString('ko-KR',{hour:'2-digit',minute:'2-digit'});
           el.style.color = '#1a7a40';
         } else if (r && r.notLoaded) {
