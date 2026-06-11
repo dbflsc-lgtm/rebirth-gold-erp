@@ -178,7 +178,17 @@
     };
   }
 
-  async function saveCollection(colName, arr) {
+  // 같은 기기 내 연속 저장 직렬화: 같은 컬렉션의 저장은 항상 앞 저장이 끝난 뒤 실행
+  // (카탈로그처럼 청크가 많아 저장이 수 초 걸릴 때 자기 자신을 충돌로 오인하는 것 방지)
+  const _saveQueues = {};
+  function saveCollection(colName, arr) {
+    const prev = _saveQueues[colName] || Promise.resolve();
+    const run = prev.catch(() => {}).then(() => _saveCollectionRun(colName, arr));
+    _saveQueues[colName] = run;
+    return run;
+  }
+
+  async function _saveCollectionRun(colName, arr) {
     if (!Array.isArray(arr)) return { ok: true };
     const CHUNK = 150;
     const cleanArr = colName === 'erp_catalog'
@@ -328,7 +338,7 @@
 
   window._fbReady = true;
   window._fbInit = async function() { return true; };
-  console.log('✅ Firebase REST v4 준비됨 (Auth + rev 무결성 + 충돌감지)');
+  console.log('✅ Firebase REST v4.1 준비됨 (Auth + rev 무결성 + 저장 직렬화)');
 })();
 </script>
 <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"></script>
