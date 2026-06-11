@@ -12,14 +12,11 @@
 (function() {
   const API_KEY    = 'AIzaSyAw6-FH1Q17ZONRiOjyEX7u_SbQQHIUmIA';
   const PROJECT_ID = 'rebirth-gold';
-  // Storage 업로드에서 접근 가능하도록 전역 노출
   window._RG_API_KEY    = API_KEY;
   window._RG_PROJECT_ID = PROJECT_ID;
   const BASE_URL   = 'https://firestore.googleapis.com/v1/projects/' + PROJECT_ID + '/databases/(default)/documents';
+  const AUTH_EMAIL_DOMAIN = 'rebirthgold-erp.com'; // 가상 도메인: 로그인ID@도메인 형식으로 Firebase Auth 사용자 생성
 
-  // 컬렉션별 분산 저장 (1MB 한도 해결)
-  // 대용량 배열(catalog, inventory, sales 등)은 각각 독립 컬렉션으로
-  // 소용량 데이터(설정, 시세 등)는 erp/meta 문서에 묶어서 저장
   const COLLECTIONS = {
     catalog:       'erp_catalog',
     inventory:     'erp_inventory',
@@ -37,134 +34,281 @@
     customerDeals: 'erp_customerdeals',
     goldLedger:    'erp_goldledger',
   };
-  // 소용량 데이터는 meta 문서에
   const META_FIELDS = ['permissions','auditState','cashClosedDates','goldClosedDates'];
 
-  // API Key 방식으로 직접 접근 (Auth 토큰 불필요 - Rules를 allow read,write:if true 로 설정 시)
+  // ═══════════════════════════════════════════════════════════
+  // Firebase Authentication (이메일/비밀번호 → ID 토큰)
+  // ═══════════════════════════════════════════════════════════
+  let _idToken = null, _refreshToken = null, _tokenExp = 0, _refreshTimer = null;
+
+  function emailOf(id) { return String(id).trim().toLowerCase() + '@' + AUTH_EMAIL_DOMAIN; }
+
+  function _setTokens(idToken, refreshToken, expiresIn) {
+    _idToken = idToken; _refreshToken = refreshToken;
+    _tokenExp = Date.now() + (expiresIn - 120) * 1000; // 2분 여유
+    try { sessionStorage.setItem('rg-rtoken', refreshToken); } catch(e) {}
+    if (_refreshTimer) clearTimeout(_refreshTimer);
+    _refreshTimer = setTimeout(() => { if (_refreshToken) authRefresh(_refreshToken); }, Math.max((expiresIn - 300) * 1000, 60000));
+  }
+
+  async function authSignIn(id, pw) {
+    try {
+      const res = await fetch('https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=' + API_KEY, {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ email: emailOf(id), password: pw, returnSecureToken: true })
+      });
+      const json = await res.json();
+      if (!res.ok) return { ok:false, code: json?.error?.message || 'UNKNOWN' };
+      _setTokens(json.idToken, json.refreshToken, Number(json.expiresIn || 3600));
+      return { ok:true, localId: json.localId };
+    } catch(e) { return { ok:false, code:'NETWORK' }; }
+  }
+
+  async function authRefresh(refreshToken) {
+    try {
+      const res = await fetch('https://securetoken.googleapis.com/v1/token?key=' + API_KEY, {
+        method:'POST', headers:{'Content-Type':'application/x-www-form-urlencoded'},
+        body: 'grant_type=refresh_token&refresh_token=' + encodeURIComponent(refreshToken)
+      });
+      if (!res.ok) return false;
+      const json = await res.json();
+      _setTokens(json.id_token, json.refresh_token, Number(json.expires_in || 3600));
+      return true;
+    } catch(e) { return false; }
+  }
+
+  async function getToken() {
+    if (_idToken && Date.now() < _tokenExp) return _idToken;
+    if (_refreshToken && await authRefresh(_refreshToken)) return _idToken;
+    return null;
+  }
+
+  async function authChangePassword(newPw) {
+    const token = await getToken();
+    if (!token) return { ok:false, code:'NO_TOKEN' };
+    try {
+      const res = await fetch('https://identitytoolkit.googleapis.com/v1/accounts:update?key=' + API_KEY, {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ idToken: token, password: newPw, returnSecureToken: true })
+      });
+      const json = await res.json();
+      if (!res.ok) return { ok:false, code: json?.error?.message || 'UNKNOWN' };
+      _setTokens(json.idToken, json.refreshToken, Number(json.expiresIn || 3600));
+      return { ok:true };
+    } catch(e) { return { ok:false, code:'NETWORK' }; }
+  }
+
+  function authSignOut() {
+    _idToken = null; _refreshToken = null; _tokenExp = 0;
+    if (_refreshTimer) clearTimeout(_refreshTimer);
+    try { sessionStorage.removeItem('rg-rtoken'); } catch(e) {}
+  }
+
+  window._authSignIn = authSignIn;
+  window._authChangePassword = authChangePassword;
+  window._authSignOut = authSignOut;
+  window._authHasSession = () => { try { return !!sessionStorage.getItem('rg-rtoken'); } catch(e){ return false; } };
+  window._authRestoreSession = async () => {
+    try {
+      const rt = sessionStorage.getItem('rg-rtoken');
+      if (!rt) return false;
+      _refreshToken = rt;
+      return await authRefresh(rt);
+    } catch(e) { return false; }
+  };
+  // Storage 업로드 등에서 사용할 인증 헤더
+  window._authHeader = async () => {
+    const t = await getToken();
+    return t ? { 'Authorization': 'Firebase ' + t } : {};
+  };
+
+  // ═══════════════════════════════════════════════════════════
+  // Firestore REST (인증 헤더 + 재시도)
+  // ═══════════════════════════════════════════════════════════
+  async function authedFetch(url, options = {}, retry = 1) {
+    const token = await getToken();
+    const headers = { ...(options.headers || {}) };
+    if (token) headers['Authorization'] = 'Bearer ' + token;
+    let res;
+    try { res = await fetch(url, { ...options, headers }); }
+    catch(e) {
+      if (retry > 0) { await new Promise(r => setTimeout(r, 600)); return authedFetch(url, options, retry - 1); }
+      throw e;
+    }
+    if (res.status === 401 && retry > 0 && _refreshToken) {
+      await authRefresh(_refreshToken);
+      return authedFetch(url, options, retry - 1);
+    }
+    if ((res.status >= 500 || res.status === 429) && retry > 0) {
+      await new Promise(r => setTimeout(r, 700));
+      return authedFetch(url, options, retry - 1);
+    }
+    return res;
+  }
+
   async function fsGet(path) {
-    const res = await fetch(`${BASE_URL}/${path}?key=${API_KEY}`);
+    const res = await authedFetch(`${BASE_URL}/${path}?key=${API_KEY}`);
     if (!res.ok) return null;
     return res.json();
   }
-
   async function fsPatch(path, fields) {
-    const res = await fetch(`${BASE_URL}/${path}?key=${API_KEY}`, {
+    const res = await authedFetch(`${BASE_URL}/${path}?key=${API_KEY}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ fields })
     });
     return res.ok;
   }
-
   async function fsDelete(path) {
-    const res = await fetch(`${BASE_URL}/${path}?key=${API_KEY}`, { method: 'DELETE' });
-    return res.ok;
+    const res = await authedFetch(`${BASE_URL}/${path}?key=${API_KEY}`, { method: 'DELETE' });
+    return res.ok || res.status === 404;
   }
 
-  async function fsListDocs(collection) {
-    const res = await fetch(`${BASE_URL}/${collection}?key=${API_KEY}&pageSize=500`);
-    if (!res.ok) return [];
-    const json = await res.json();
-    return json.documents || [];
+  // ═══════════════════════════════════════════════════════════
+  // 청크 저장 v4: _meta(rev/chunkCount) + 충돌 감지 + 실패 감지
+  // ═══════════════════════════════════════════════════════════
+  const loadedRevs = {}; // colName → 이 세션이 로드한 rev (낙관적 잠금)
+
+  async function readMeta(colName) {
+    const doc = await fsGet(`${colName}/_meta`);
+    if (!doc?.fields) return null;
+    return {
+      rev: Number(doc.fields.rev?.integerValue ?? 0),
+      chunkCount: Number(doc.fields.chunkCount?.integerValue ?? 0)
+    };
   }
 
-  // 배열을 청크 단위로 분할 저장 (문서당 500개)
   async function saveCollection(colName, arr) {
-    if (!Array.isArray(arr)) return true;
+    if (!Array.isArray(arr)) return { ok: true };
     const CHUNK = 150;
-    // catalog 저장 시 base64 사진 제거 (1MB 초과 방지)
     const cleanArr = colName === 'erp_catalog'
-      ? arr.map(item => {
-          if (item.photo && item.photo.startsWith('data:image')) {
-            return {...item, photo: null};
-          }
-          return item;
-        })
+      ? arr.map(item => (item.photo && item.photo.startsWith('data:image')) ? { ...item, photo: null } : item)
       : arr;
-    const newChunkCount = Math.ceil(cleanArr.length / CHUNK) || 0;
-    // 새 청크 저장
-    for (let i = 0; i < cleanArr.length; i += CHUNK) {
-      const chunk = cleanArr.slice(i, i + CHUNK);
-      const chunkId = 'chunk_' + Math.floor(i / CHUNK);
-      await fsPatch(`${colName}/${chunkId}`, {
+
+    // 1) 충돌 감지: 다른 기기가 먼저 저장했으면 중단
+    const meta = await readMeta(colName);
+    if (meta && loadedRevs[colName] !== undefined && meta.rev !== loadedRevs[colName]) {
+      console.warn(`[충돌] ${colName}: 서버 rev=${meta.rev}, 내 rev=${loadedRevs[colName]}`);
+      return { ok: false, conflict: true, col: colName };
+    }
+
+    // 2) 청크 기록 — 하나라도 실패하면 즉시 실패 반환
+    const newChunkCount = Math.max(Math.ceil(cleanArr.length / CHUNK), 1);
+    for (let i = 0; i < newChunkCount; i++) {
+      const chunk = cleanArr.slice(i * CHUNK, (i + 1) * CHUNK);
+      const ok = await fsPatch(`${colName}/chunk_${i}`, {
         data:  { stringValue: JSON.stringify(chunk) },
-        index: { integerValue: String(Math.floor(i / CHUNK)) }
+        index: { integerValue: String(i) }
       });
+      if (!ok) return { ok: false, col: colName };
     }
-    // 빈 배열이면 chunk_0도 명시적으로 빈 배열로 저장
-    if (cleanArr.length === 0) {
-      await fsPatch(`${colName}/chunk_0`, {
-        data:  { stringValue: '[]' },
-        index: { integerValue: '0' }
-      });
+
+    // 3) _meta 갱신 (rev+1) — 이게 성공해야 저장 완료로 간주
+    const newRev = (meta?.rev || 0) + 1;
+    const metaOk = await fsPatch(`${colName}/_meta`, {
+      rev:        { integerValue: String(newRev) },
+      chunkCount: { integerValue: String(newChunkCount) },
+      updatedAt:  { stringValue: new Date().toISOString() },
+      updatedBy:  { stringValue: (window.currentUser && window.currentUser.id) || '' }
+    });
+    if (!metaOk) return { ok: false, col: colName };
+    loadedRevs[colName] = newRev;
+
+    // 4) 초과 청크 정리 (이전 chunkCount 기준)
+    const oldCount = meta?.chunkCount || 0;
+    const sweepEnd = Math.max(oldCount, newChunkCount + 10);
+    for (let i = newChunkCount; i < sweepEnd; i++) {
+      const check = await authedFetch(`${BASE_URL}/${colName}/chunk_${i}?key=${API_KEY}`);
+      if (!check.ok) { if (i >= oldCount) break; else continue; }
+      await fsDelete(`${colName}/chunk_${i}`);
     }
-    // 초과 청크 삭제 (이전보다 청크 수가 줄었을 때)
-    for (let i = newChunkCount; i < newChunkCount + 10; i++) {
-      const res = await fetch(`${BASE_URL}/${colName}/chunk_${i}?key=${API_KEY}`);
-      if (!res.ok) break; // 없으면 중단
-      await fetch(`${BASE_URL}/${colName}/chunk_${i}?key=${API_KEY}`, { method: 'DELETE' });
-    }
-    return true;
+    return { ok: true };
   }
 
   async function loadCollection(colName) {
-    try {
-      let arr = [];
-      let i = 0;
-      while (true) {
-        const res = await fetch(`${BASE_URL}/${colName}/chunk_${i}?key=${API_KEY}`);
-        if (!res.ok) break;
-        const doc = await res.json();
-        try {
-          const chunk = JSON.parse(doc.fields?.data?.stringValue || '[]');
-          if (!chunk.length) break;
-          arr = arr.concat(chunk);
-          i++;
-        } catch(e) { break; }
+    const meta = await readMeta(colName);
+    if (meta && meta.chunkCount > 0) {
+      // _meta 기반: 청크 수만큼 병렬 로드. 하나라도 실패하면 throw (부분 로드 금지)
+      const fetches = [];
+      for (let i = 0; i < meta.chunkCount; i++) {
+        fetches.push(fsGet(`${colName}/chunk_${i}`).then(doc => {
+          if (!doc) throw new Error(`${colName}/chunk_${i} 로드 실패`);
+          try { return JSON.parse(doc.fields?.data?.stringValue || '[]'); }
+          catch(e) { throw new Error(`${colName}/chunk_${i} 파싱 실패`); }
+        }));
       }
-      return arr;
-    } catch(e) { return []; }
+      const chunks = await Promise.all(fetches);
+      loadedRevs[colName] = meta.rev;
+      return chunks.flat();
+    }
+    // 레거시(아직 _meta 없음): 순차 탐색 — 빈 청크여도 멈추지 않고 404까지 진행
+    let arr = []; let i = 0;
+    while (i < 300) {
+      const res = await authedFetch(`${BASE_URL}/${colName}/chunk_${i}?key=${API_KEY}`);
+      if (res.status === 404) break;
+      if (!res.ok) throw new Error(`${colName}/chunk_${i} 로드 실패 (${res.status})`);
+      const doc = await res.json();
+      try { arr = arr.concat(JSON.parse(doc.fields?.data?.stringValue || '[]')); } catch(e) {}
+      i++;
+    }
+    loadedRevs[colName] = 0; // 다음 저장 시 _meta가 생성됨 (rev=1)
+    return arr;
   }
 
-  // 전체 DB 저장 (병렬 처리)
   // 전체 saveDB()에서 제외할 컬렉션 (개별 saveDB('key')로만 저장)
   const INDIVIDUAL_SAVE_ONLY = new Set(['inventory', 'catalog', 'deletedInventory', 'returned']);
 
+  // 클라우드 로드 성공 여부 — 실패 상태에서는 절대 클라우드에 쓰지 않음 (옛 데이터 역류 방지)
+  window._fbLoadedOK = false;
+
   window._fbSave = async function(data) {
+    if (!window._fbLoadedOK) return { ok: false, notLoaded: true };
     try {
-      const tasks = [];
-      // 대용량 컬렉션 병렬 저장 (개별 저장 전용 컬렉션 제외)
+      const results = [];
       for (const [key, col] of Object.entries(COLLECTIONS)) {
         if (INDIVIDUAL_SAVE_ONLY.has(key)) continue;
-        if (data[key] !== undefined) tasks.push(saveCollection(col, data[key]));
+        if (data[key] !== undefined) results.push(await saveCollection(col, data[key]));
       }
-      // 소용량 메타 데이터
       const metaFields = {};
       for (const k of META_FIELDS) {
-        if (data[k] !== undefined) {
-          metaFields[k] = { stringValue: JSON.stringify(data[k]) };
-        }
+        if (data[k] !== undefined) metaFields[k] = { stringValue: JSON.stringify(data[k]) };
       }
       if (Object.keys(metaFields).length) {
-        tasks.push(fsPatch('erp/meta', metaFields));
+        const ok = await fsPatch('erp/meta', metaFields);
+        results.push({ ok });
       }
-      await Promise.all(tasks);
-      return true;
-    } catch(e) {
-      console.error('Firebase save error:', e);
-      return false;
-    }
+      const conflict = results.find(r => r && r.conflict);
+      if (conflict) return conflict;
+      const failed = results.find(r => !r || !r.ok);
+      return failed || { ok: true };
+    } catch(e) { console.error('Firebase save error:', e); return { ok: false }; }
   };
 
-  // 전체 DB 로드
+  window._fbSaveCatalogOnly = async function(catalogArr) {
+    if (!window._fbLoadedOK) return { ok: false, notLoaded: true };
+    try { return await saveCollection(COLLECTIONS.catalog, catalogArr); }
+    catch(e) { console.error('catalog save error:', e); return { ok: false }; }
+  };
+
+  window._fbSaveKey = async function(key, value) {
+    if (!window._fbLoadedOK) return { ok: false, notLoaded: true };
+    try {
+      const colName = COLLECTIONS[key];
+      if (colName) return await saveCollection(colName, Array.isArray(value) ? value : []);
+      if (META_FIELDS.includes(key)) {
+        const ok = await fsPatch('erp/meta', { [key]: { stringValue: JSON.stringify(value) } });
+        return { ok };
+      }
+      return { ok: true };
+    } catch(e) { console.error('_fbSaveKey error:', e); return { ok: false }; }
+  };
+
   window._fbLoad = async function() {
     try {
       const result = {};
-      // 대용량 컬렉션 병렬 로드
       const entries = Object.entries(COLLECTIONS);
       const arrays = await Promise.all(entries.map(([, col]) => loadCollection(col)));
       entries.forEach(([key], i) => { result[key] = arrays[i]; });
-      // 메타 데이터
       const meta = await fsGet('erp/meta');
       if (meta?.fields) {
         for (const k of META_FIELDS) {
@@ -173,38 +317,18 @@
           }
         }
       }
+      window._fbLoadedOK = true;
       return Object.keys(result).length ? result : null;
     } catch(e) {
       console.error('Firebase load error:', e);
+      window._fbLoadedOK = false;
       return null;
     }
   };
 
-  // 카탈로그만 별도 저장 (일괄 업로드용)
-  window._fbSaveCatalogOnly = async function(catalogArr) {
-    try {
-      await saveCollection(COLLECTIONS.catalog, catalogArr);
-      return true;
-    } catch(e) {
-      console.error('catalog save error:', e);
-      return false;
-    }
-  };
-
-  window._fbSaveKey = async function(key, value) {
-    try {
-      const colName = COLLECTIONS[key];
-      if (colName) {
-        await saveCollection(colName, Array.isArray(value) ? value : []);
-      } else if (['permissions','auditState','cashClosedDates','goldClosedDates'].includes(key)) {
-        await fsPatch('erp/meta', { [key]: { stringValue: JSON.stringify(value) } });
-      }
-      return true;
-    } catch(e) { console.error('_fbSaveKey error:', e); return false; }
-  };
   window._fbReady = true;
   window._fbInit = async function() { return true; };
-  console.log('✅ Firebase REST API v3 준비됨 (컬렉션 분산 + API Key)');
+  console.log('✅ Firebase REST v4 준비됨 (Auth + rev 무결성 + 충돌감지)');
 })();
 </script>
 <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"></script>
@@ -3535,16 +3659,25 @@ function saveDB(key) {
   } catch(e) {}
   // Firebase 클라우드 저장 (비동기)
   if (window._fbReady) {
-    const showStatus = (ok) => {
+    const showStatus = (r) => {
+      const ok = r === true || (r && r.ok);
       const el = document.getElementById('fb-sync-status');
       if (el) {
         if (ok) {
           el.textContent = '☁ 저장됨 ' + new Date().toLocaleTimeString('ko-KR',{hour:'2-digit',minute:'2-digit'});
           el.style.color = '#1a7a40';
+        } else if (r && r.notLoaded) {
+          el.textContent = '⚠ 클라우드 미연결 — 저장 안 됨';
+          el.style.color = '#c0392b';
         } else {
-          el.textContent = '⚠ 클라우드 저장 실패';
+          el.textContent = '⚠ 클라우드 저장 실패 — 네트워크 확인 후 다시 저장하세요';
           el.style.color = '#c0392b';
         }
+      }
+      if (r && r.conflict) {
+        if (confirm('⚠ 다른 기기에서 같은 데이터가 먼저 저장되어 이번 저장이 취소되었습니다.\n\n최신 데이터를 다시 불러옵니다. (방금 입력한 내용은 다시 입력해야 할 수 있습니다)\n\n확인을 누르면 새로고침합니다.')) location.reload();
+      } else if (r && r.notLoaded) {
+        alert('⚠ 클라우드 연결이 안 된 상태라 변경사항이 저장되지 않았습니다.\n네트워크 확인 후 페이지를 새로고침해 주세요.');
       }
     };
     // key 지정 시 해당 컬렉션만 저장 (멀티기기 덮어쓰기 방지)
@@ -4515,9 +4648,10 @@ async function uploadToStorage(file) {
   const name = 'catalog/' + Date.now() + '_' + Math.random().toString(36).slice(2) + '.' + ext;
   const encoded = encodeURIComponent(name);
   const uploadUrl = `https://firebasestorage.googleapis.com/v0/b/${PROJECT_ID}.firebasestorage.app/o?uploadType=media&name=${encoded}&key=${API_KEY}`;
+  const authH = window._authHeader ? await window._authHeader() : {};
   const res = await fetch(uploadUrl, {
     method: 'POST',
-    headers: { 'Content-Type': file.type || 'image/jpeg' },
+    headers: { 'Content-Type': file.type || 'image/jpeg', ...authH },
     body: file
   });
   if (!res.ok) {
@@ -4551,9 +4685,10 @@ async function autoBackupToStorage() {
     const name = `backup/${today}.json`;
     const encoded = encodeURIComponent(name);
     const uploadUrl = `https://firebasestorage.googleapis.com/v0/b/${PROJECT_ID}.firebasestorage.app/o?uploadType=media&name=${encoded}&key=${API_KEY}`;
+    const authH = window._authHeader ? await window._authHeader() : {};
     const res = await fetch(uploadUrl, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...authH },
       body: blob
     });
     if (!res.ok) return;
@@ -4564,7 +4699,8 @@ async function autoBackupToStorage() {
     // 7일 이전 백업 삭제
     const old7 = new Date(Date.now() - 8 * 86400000).toISOString().slice(0,10);
     const oldName = encodeURIComponent(`backup/${old7}.json`);
-    fetch(`https://firebasestorage.googleapis.com/v0/b/${PROJECT_ID}.firebasestorage.app/o/${oldName}?key=${API_KEY}`, { method: 'DELETE' }).catch(()=>{});
+    const delH = window._authHeader ? await window._authHeader() : {};
+    fetch(`https://firebasestorage.googleapis.com/v0/b/${PROJECT_ID}.firebasestorage.app/o/${oldName}?key=${API_KEY}`, { method: 'DELETE', headers: delH }).catch(()=>{});
 
     // 상태 표시
     const el = document.getElementById('fb-sync-status');
@@ -4585,17 +4721,19 @@ async function restoreFromBackup(dateStr) {
     const name = encodeURIComponent(`backup/${dateStr}.json`);
     // 토큰 없이 읽기 가능하도록 Storage 규칙이 허용돼야 함
     // → 먼저 메타데이터로 토큰 조회
-    const metaRes = await fetch(`https://firebasestorage.googleapis.com/v0/b/${PROJECT_ID}.firebasestorage.app/o/${name}?key=${API_KEY}`);
+    const bkH = window._authHeader ? await window._authHeader() : {};
+    const metaRes = await fetch(`https://firebasestorage.googleapis.com/v0/b/${PROJECT_ID}.firebasestorage.app/o/${name}?key=${API_KEY}`, { headers: bkH });
     if (!metaRes.ok) { alert('해당 날짜 백업이 없습니다.'); return; }
     const meta = await metaRes.json();
     const token = meta.downloadTokens;
     const dlUrl = `https://firebasestorage.googleapis.com/v0/b/${PROJECT_ID}.firebasestorage.app/o/${name}?alt=media&token=${token}`;
-    const dataRes = await fetch(dlUrl);
+    const dataRes = await fetch(dlUrl, { headers: bkH });
     if (!dataRes.ok) { alert('백업 파일을 불러올 수 없습니다.'); return; }
     const restored = await dataRes.json();
     if (!confirm(`${dateStr} 백업으로 복원하시겠습니까?
 현재 데이터가 덮어씌워집니다.`)) return;
-    await window._fbSave(restored);
+    const saveR = await window._fbSave(restored);
+    if (!(saveR === true || (saveR && saveR.ok))) { alert('복원 저장에 실패했습니다. 네트워크 확인 후 다시 시도해주세요.'); return; }
     localStorage.removeItem('rg-erp');
     alert('복원 완료! 페이지를 새로고침합니다.');
     location.reload();
@@ -4762,8 +4900,8 @@ async function importCatalogJSON(input) {
     // Firebase에 카탈로그만 별도 저장
     statusEl.textContent = `☁ Firebase 저장 중... (${DB.catalog.length}개)`;
     if (window._fbSaveCatalogOnly) {
-      const ok = await window._fbSaveCatalogOnly(DB.catalog);
-      if (ok) {
+      const r = await window._fbSaveCatalogOnly(DB.catalog);
+      if (r === true || (r && r.ok)) {
         statusEl.textContent = `✅ ${newItems.length}개 업로드 완료 (총 ${DB.catalog.length}개)`;
         statusEl.style.color = '#1a7a40';
         toast(`✅ 카탈로그 ${newItems.length}개 업로드 완료!`);
@@ -7785,19 +7923,46 @@ function saveBulkInventory() {
 }
 
 // ── Login / Logout ───────────────────────────────────────────
-function doLogin() {
+async function doLogin() {
   const id = document.getElementById('login-id').value.trim();
   const pw = document.getElementById('login-pw').value;
-  const acct = DB.accounts.find(a => a.id === id && a.pw === pw);
+  const errEl = document.getElementById('login-error');
+  if (!id || !pw) { errEl.textContent = '아이디와 비밀번호를 입력해주세요.'; return; }
+  errEl.textContent = '로그인 중...';
+  // 1) Firebase Auth 인증
+  const auth = await window._authSignIn(id, pw);
+  if (!auth.ok) {
+    const c = auth.code || '';
+    if (c.includes('INVALID_LOGIN_CREDENTIALS') || c.includes('EMAIL_NOT_FOUND') || c.includes('INVALID_PASSWORD') || c.includes('INVALID_EMAIL')) {
+      errEl.textContent = '아이디 또는 비밀번호가 올바르지 않습니다.';
+    } else if (c.includes('TOO_MANY_ATTEMPTS')) {
+      errEl.textContent = '로그인 시도 횟수 초과 — 잠시 후 다시 시도해주세요.';
+    } else if (c === 'NETWORK') {
+      errEl.textContent = '네트워크 오류 — 인터넷 연결을 확인해주세요.';
+    } else {
+      errEl.textContent = '로그인 실패: ' + c;
+    }
+    return;
+  }
+  // 2) 인증 후 클라우드 데이터 로드
+  errEl.textContent = '데이터 불러오는 중...';
+  const loaded = await loadDBFromFirebase();
+  if (!loaded) {
+    errEl.textContent = '데이터 로드 실패 — 네트워크 확인 후 다시 시도해주세요.';
+    window._authSignOut();
+    return;
+  }
+  const acct = DB.accounts.find(a => a.id === id);
   if (!acct) {
-    document.getElementById('login-error').textContent = '아이디 또는 비밀번호가 올바르지 않습니다.';
+    errEl.textContent = '인증은 성공했지만 계정관리에 등록되지 않은 아이디입니다. 관리자에게 문의하세요.';
+    window._authSignOut();
     return;
   }
   currentUser = { id: acct.id, name: acct.name, role: acct.role };
   acct.lastLogin = new Date().toISOString().slice(0,16).replace('T',' ');
   // 세션 유지 — 새로고침해도 로그인 상태 유지
   try { sessionStorage.setItem('rg-session', JSON.stringify(currentUser)); } catch(e) {}
-  saveDB();
+  saveDB('accounts');
   document.getElementById('login-screen').style.display = 'none';
   document.getElementById('sidebar').style.display = 'flex';
   document.getElementById('main').style.display = 'flex';
@@ -7828,6 +7993,7 @@ function doLogin() {
 function doLogout() {
   if (!confirm('로그아웃 하시겠습니까?')) return;
   currentUser = null;
+  if (window._authSignOut) window._authSignOut();
   try { sessionStorage.removeItem('rg-session'); } catch(e) {}
   document.getElementById('login-screen').style.display = 'flex';
   document.getElementById('sidebar').style.display = 'none';
@@ -7924,8 +8090,11 @@ function saveAccount() {
   const role = document.getElementById('ac-role').value;
   if (!name || !id || !pw) { toast('모든 항목을 입력해주세요','error'); return; }
   if (DB.accounts.find(a=>a.id===id)) { toast('이미 존재하는 아이디입니다','error'); return; }
-  DB.accounts.push({ id, name, pw, role, createdAt: today(), lastLogin: '' });
-  saveDB(); closeModal('account'); renderAccounts(); toast('계정 등록 완료');
+  if (pw.length < 6) { toast('비밀번호는 6자 이상이어야 합니다 (Firebase 정책)','error'); return; }
+  // 평문 비밀번호는 저장하지 않음 — 실제 인증은 Firebase Auth가 담당
+  DB.accounts.push({ id, name, role, createdAt: today(), lastLogin: '' });
+  saveDB('accounts'); closeModal('account'); renderAccounts();
+  alert(`계정 정보가 등록되었습니다.\n\n⚠ 로그인이 가능하려면 Firebase 콘솔에서 사용자를 추가해야 합니다:\n1. console.firebase.google.com → rebirth-gold\n2. Authentication → Users → 사용자 추가\n3. 이메일: ${id}@rebirthgold-erp.com\n4. 비밀번호: ${pw}\n\n이 작업을 완료해야 [${name}] 계정으로 로그인할 수 있습니다.`);
 }
 
 function deleteAccount(id) {
@@ -8011,18 +8180,19 @@ loadDB();
 
 
 
-// Firebase 동기화 즉시 실행
+// Firebase 동기화: 보안 규칙상 로그인(인증) 후에만 데이터 로드 가능
 (async () => {
   try {
-    const loaded = await loadDBFromFirebase();
-
-    // ── 세션 복원: 새로고침해도 로그인 유지 ──────────────────────
+    let loaded = false;
+    // ── 세션 복원: 새로고침해도 로그인 유지 (리프레시 토큰 → 새 ID 토큰) ──
     try {
       const saved = sessionStorage.getItem('rg-session');
-      if (saved) {
+      if (saved && window._authHasSession && window._authHasSession()) {
+        const authOk = await window._authRestoreSession();
+        if (authOk) loaded = await loadDBFromFirebase();
         const sess = JSON.parse(saved);
-        const acct = DB.accounts.find(a => a.id === sess.id);
-        if (acct && acct.pw) {
+        const acct = loaded ? DB.accounts.find(a => a.id === sess.id) : null;
+        if (acct) {
           // 계정이 아직 존재하면 자동 로그인
           currentUser = { id: acct.id, name: acct.name, role: acct.role };
           document.getElementById('login-screen').style.display = 'none';
@@ -8046,8 +8216,8 @@ loadDB();
     const updateSyncUI = () => {
       const el = document.getElementById('fb-sync-status');
       if (el) {
-        el.textContent = loaded ? '☁ 동기화됨' : '☁ 로컬 모드';
-        el.style.color = loaded ? '#1a7a40' : '#888';
+        if (window._fbLoadedOK) { el.textContent = '☁ 동기화됨'; el.style.color = '#1a7a40'; }
+        else { el.textContent = '☁ 로그인 후 동기화됩니다'; el.style.color = '#888'; }
       }
     };
     updateSyncUI();
@@ -10239,10 +10409,10 @@ function closeChangePwModal() {
   document.getElementById('modal-change-pw').style.display = 'none';
 }
 
-function saveChangePw() {
+async function saveChangePw() {
   const current = document.getElementById('cpw-current').value;
   const newPw   = document.getElementById('cpw-new').value;
-  const confirm = document.getElementById('cpw-confirm').value;
+  const confirmPw = document.getElementById('cpw-confirm').value;
   const errEl   = document.getElementById('cpw-error');
 
   const showErr = msg => { errEl.textContent=msg; errEl.style.display='block'; };
@@ -10250,15 +10420,25 @@ function saveChangePw() {
 
   const acct = DB.accounts.find(a=>a.id===currentUser?.id);
   if (!acct) { showErr('계정 정보를 찾을 수 없습니다'); return; }
-  if (acct.pw !== current) { showErr('현재 비밀번호가 올바르지 않습니다'); return; }
-  if (newPw.length < 4)    { showErr('새 비밀번호는 4자 이상이어야 합니다'); return; }
-  if (newPw !== confirm)   { showErr('새 비밀번호가 일치하지 않습니다'); return; }
+  if (newPw.length < 6)    { showErr('새 비밀번호는 6자 이상이어야 합니다'); return; }
+  if (newPw !== confirmPw) { showErr('새 비밀번호가 일치하지 않습니다'); return; }
   if (newPw === current)   { showErr('현재 비밀번호와 동일합니다'); return; }
 
-  acct.pw = newPw;
+  // 현재 비밀번호 확인 (재인증)
+  showErr('확인 중...');
+  const re = await window._authSignIn(currentUser.id, current);
+  if (!re.ok) { showErr('현재 비밀번호가 올바르지 않습니다'); return; }
+
+  // Firebase Auth 비밀번호 변경
+  const r = await window._authChangePassword(newPw);
+  if (!r.ok) { showErr('변경 실패: ' + (r.code || '알 수 없는 오류')); return; }
+
+  // 평문 비밀번호는 더 이상 저장하지 않음 (기존 필드 제거)
+  delete acct.pw;
   acct.pwChangedAt = today();
-  acct.mustChangePw = false; // 임시비번 강제변경 해제
-  saveDB();
+  acct.mustChangePw = false;
+  errEl.style.display = 'none';
+  saveDB('accounts');
   closeChangePwModal();
   toast('✅ 비밀번호가 변경되었습니다');
   renderDashboard();
@@ -10267,17 +10447,7 @@ function saveChangePw() {
 // 관리자가 직원 비밀번호 초기화 (임시 비밀번호 발급)
 function adminResetPw(targetId, targetName) {
   if (currentUser?.role !== 'admin') { toast('관리자만 초기화할 수 있습니다','error'); return; }
-  const tempPw = targetId + '1234'; // 임시 비밀번호: 아이디+1234
-  if (!confirm(`[${targetName}] 비밀번호를 임시 비밀번호로 초기화합니다.\n\n임시 비밀번호: ${tempPw}\n\n계속하시겠습니까?`)) return;
-  const acct = DB.accounts.find(a=>a.id===targetId);
-  if (!acct) { toast('계정을 찾을 수 없습니다','error'); return; }
-  acct.pw = tempPw;
-  acct.pwResetAt = today();
-  acct.pwResetBy = currentUser?.name;
-  saveDB();
-  toast(`✅ ${targetName} 임시 비밀번호: ${tempPw}`);
-  // 알림 유지
-  setTimeout(()=>alert(`[${targetName}] 임시 비밀번호\n\n${tempPw}\n\n직원에게 전달 후 본인이 변경하도록 안내하세요.`), 500);
+  alert(`[${targetName}] 비밀번호 초기화 안내\n\n보안 강화로 비밀번호는 Firebase 콘솔에서 변경합니다:\n\n1. console.firebase.google.com → rebirth-gold 프로젝트\n2. Authentication → Users\n3. ${targetId}@rebirthgold-erp.com 계정의 ⋮ 메뉴 → 비밀번호 재설정\n\n새 비밀번호를 직원에게 전달한 뒤, 직원이 로그인 후 직접 변경하도록 안내하세요.`);
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -10399,13 +10569,13 @@ function saveTempPw() {
   const acct = DB.accounts.find(a => a.id === targetId);
   if (!acct) { toast('계정을 찾을 수 없습니다', 'error'); return; }
 
-  acct.pw = tempPw;
+  // 보안 강화: 실제 비밀번호는 Firebase 콘솔에서만 변경 가능
   acct.mustChangePw = true;
-  acct.pwResetAt = nowStr ? nowStr() : today();
+  acct.pwResetAt = (typeof nowStr === 'function') ? nowStr() : today();
   acct.pwResetBy = currentUser?.name;
-  saveDB();
+  saveDB('accounts');
   modal.style.display = 'none';
-  toast(`✅ [${targetName}] 임시 비밀번호: ${tempPw} — 직원에게 전달해주세요`);
+  alert(`[${targetName}] 임시 비밀번호 설정 안내\n\n원하는 임시 비밀번호: ${tempPw}\n\n이 비밀번호를 실제로 적용하려면 Firebase 콘솔에서 변경해야 합니다:\n1. console.firebase.google.com → rebirth-gold\n2. Authentication → Users\n3. ${targetId}@rebirthgold-erp.com → ⋮ → 비밀번호 재설정 → "${tempPw}" 입력\n\n직원에게 전달 후 본인이 직접 변경하도록 안내하세요.`);
 }
 
 // ── 관리자 비밀번호 긴급 초기화 ──────────────────────────────
