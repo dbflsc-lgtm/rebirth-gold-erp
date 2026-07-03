@@ -168,6 +168,16 @@
   // 청크 저장 v4: _meta(rev/chunkCount) + 충돌 감지 + 실패 감지
   // ═══════════════════════════════════════════════════════════
   const loadedRevs = {}; // colName → 이 세션이 로드한 rev (낙관적 잠금)
+  const syncSnaps = {};  // colName → Map(id → JSON) : 마지막 동기화 시점 상태 (델타 병합용)
+
+  function _snapOf(arr) {
+    const m = new Map();
+    for (const it of arr) {
+      if (!it || typeof it !== 'object' || it.id === undefined || it.id === null) return null;
+      m.set(it.id, JSON.stringify(it));
+    }
+    return m;
+  }
 
   async function readMeta(colName) {
     const doc = await fsGet(`${colName}/_meta`);
@@ -204,12 +214,28 @@
       // 모든 항목에 id가 있어야 안전하게 병합 가능
       const hasIds = (a) => a.every(it => it && typeof it === 'object' && it.id !== undefined && it.id !== null);
       if (!hasIds(saveArr)) return { ok: false, conflict: true, col: colName };
+      const oldSnap = syncSnaps[colName] || null; // 서버 로드 전에 확보 (델타 계산 기준)
       try {
         const serverArr = await loadCollection(colName); // loadedRevs를 서버 rev로 갱신
         if (!hasIds(serverArr)) return { ok: false, conflict: true, col: colName };
-        // 병합: 서버 최신본 기반 + 이 기기의 항목 (같은 id는 이 기기 우선, 양쪽 새 항목 모두 유지)
         const map = new Map(serverArr.map(it => [it.id, it]));
-        for (const it of saveArr) map.set(it.id, it);
+        if (oldSnap) {
+          // 정밀 병합: 이 세션에서 "실제로 바꾼 것"만 서버 최신본에 반영
+          // - 추가/수정된 항목 → 반영 (이 기기 우선)
+          // - 이 세션에서 삭제한 항목 → 서버에서도 제거 (판매 처리·삭제가 되살아나지 않음)
+          // - 건드리지 않은 항목 → 서버 최신 상태 유지 (다른 기기 변경 보존)
+          const localIds = new Set(saveArr.map(it => it.id));
+          for (const it of saveArr) {
+            const prev = oldSnap.get(it.id);
+            if (prev === undefined || prev !== JSON.stringify(it)) map.set(it.id, it);
+          }
+          for (const id of oldSnap.keys()) {
+            if (!localIds.has(id)) map.delete(id);
+          }
+        } else {
+          // 스냅샷이 없으면(이례적) 안전한 합집합으로 폴백
+          for (const it of saveArr) map.set(it.id, it);
+        }
         saveArr = Array.from(map.values());
         meta = await readMeta(colName);
         if (meta && meta.rev !== loadedRevs[colName]) {
@@ -256,6 +282,8 @@
       if (!check.ok) { if (i >= oldCount) break; else continue; }
       await fsDelete(`${colName}/chunk_${i}`);
     }
+    const snapAfter = _snapOf(saveArr);
+    if (snapAfter) syncSnaps[colName] = snapAfter;
     return merged ? { ok: true, merged: true } : { ok: true };
   }
 
@@ -273,7 +301,10 @@
       }
       const chunks = await Promise.all(fetches);
       loadedRevs[colName] = meta.rev;
-      return chunks.flat();
+      const flat = chunks.flat();
+      const s = _snapOf(flat);
+      if (s) syncSnaps[colName] = s;
+      return flat;
     }
     // 레거시(아직 _meta 없음): 순차 탐색 — 빈 청크여도 멈추지 않고 404까지 진행
     let arr = []; let i = 0;
@@ -286,6 +317,8 @@
       i++;
     }
     loadedRevs[colName] = 0; // 다음 저장 시 _meta가 생성됨 (rev=1)
+    const s0 = _snapOf(arr);
+    if (s0) syncSnaps[colName] = s0;
     return arr;
   }
 
@@ -362,7 +395,7 @@
 
   window._fbReady = true;
   window._fbInit = async function() { return true; };
-  console.log('✅ Firebase REST v4.2 준비됨 (Auth + rev 무결성 + 자동 병합)');
+  console.log('✅ Firebase REST v4.3 준비됨 (Auth + rev 무결성 + 델타 병합)');
 })();
 </script>
 <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"></script>
