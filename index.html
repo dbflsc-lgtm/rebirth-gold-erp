@@ -395,7 +395,7 @@
 
   window._fbReady = true;
   window._fbInit = async function() { return true; };
-  console.log('✅ Firebase REST v4.3 준비됨 (Auth + rev 무결성 + 델타 병합)');
+  console.log('✅ Firebase REST v4.4 준비됨 (Auth + rev 무결성 + 델타 병합 + 재고저장 수정)');
 })();
 </script>
 <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"></script>
@@ -5187,7 +5187,7 @@ function saveSale(printAfter) {
   };
   DB.sales.push(saleData);
   if (invId) { const inv = DB.inventory.find(i=>i.id==invId); if (inv) { inv.status = '판매'; inv.soldAt = saleData.date; inv.soldTo = saleData.partner; } }
-  saveDB(); closeModal('sales'); renderSales(); toast('판매 등록 완료');
+  saveDB(); saveDB('inventory'); closeModal('sales'); renderSales(); toast('판매 등록 완료');
   if (printAfter) setTimeout(() => printReceipt(saleData), 200);
 }
 
@@ -5463,7 +5463,7 @@ function saveRental() {
     createdBy: currentUser?.id, createdByName: currentUser?.name, createdAt: today()
   });
   if (inv) inv.status = '대여중';
-  saveDB(); closeModal('rental'); renderRental(); toast('대여 등록 완료');
+  saveDB(); saveDB('inventory'); closeModal('rental'); renderRental(); toast('대여 등록 완료');
 }
 
 function savePartner() {
@@ -6430,6 +6430,7 @@ function confirmMatchInventory(invId) {
   }
 
   saveDB();
+  saveDB('inventory');
   closeMatchInventoryModal();
   renderOrders();
   renderInventory();
@@ -6499,7 +6500,7 @@ function returnRental(id) {
     r.status = '회수완료';
     const inv = DB.inventory.find(i=>i.id===r.invId);
     if (inv) inv.status = '일반';
-    saveDB(); renderRental(); toast('회수 처리 완료');
+    saveDB(); saveDB('inventory'); renderRental(); toast('회수 처리 완료');
   }
 }
 
@@ -6625,7 +6626,7 @@ function deleteInventory(id) {
   rec.deletedById = currentUser?.id;
   DB.deletedInventory.push(rec);
   DB.inventory = DB.inventory.filter(i=>i.id!==id);
-  saveDB('inventory'); renderInventory(); toast('삭제됨 (삭제재고에서 복구 가능)');
+  saveDB('inventory'); saveDB('deletedInventory'); renderInventory(); toast('삭제됨 (삭제재고에서 복구 가능)');
 }
 
 
@@ -7354,7 +7355,7 @@ function saveBulkSale() {
     count++;
   });
   if (!count) { toast('등록할 항목이 없습니다','error'); return; }
-  saveDB('inventory'); closeModal('bulk-sale'); renderInventory(); renderSales();
+  saveDB(); saveDB('inventory'); closeModal('bulk-sale'); renderInventory(); renderSales();
   toast(`${count}건 판매등록 완료`);
   // 거래처별로 그룹핑해서 영수증 출력 여부 묻기
   const partnerIds = [...new Set(savedSales.map(s=>s.partnerId))];
@@ -7487,6 +7488,8 @@ function saveReturnSale() {
   }
 
   saveDB();
+  saveDB('inventory');
+  saveDB('deletedInventory');
   closeModal('return-sale');
   renderSales();
   renderInventory();
@@ -7661,7 +7664,7 @@ function restoreDeletedInventory(id) {
   delete inv.deletedAt;
   DB.inventory.push(inv);
   DB.deletedInventory = DB.deletedInventory.filter(i=>i.id!==id);
-  saveDB('inventory'); renderDeletedInventory(); toast('재고 복구 완료');
+  saveDB('inventory'); saveDB('deletedInventory'); renderDeletedInventory(); toast('재고 복구 완료');
 }
 
 // ── 반납재고 ───────────────────────────────────────────────
@@ -7706,7 +7709,7 @@ function saveReturn() {
     invId
   });
   inv.status = '반납';
-  saveDB('inventory'); closeModal('return'); renderReturnedInventory(); toast('반납 처리 완료');
+  saveDB('inventory'); saveDB('returned'); closeModal('return'); renderReturnedInventory(); toast('반납 처리 완료');
 }
 
 function restoreFromReturn(id) {
@@ -7716,7 +7719,7 @@ function restoreFromReturn(id) {
   const inv = DB.inventory.find(i=>i.id===r.invId);
   if (inv) inv.status = '일반';
   DB.returned = DB.returned.filter(x=>x.id!==id);
-  saveDB('inventory'); renderReturnedInventory(); toast('재고 복구 완료');
+  saveDB('inventory'); saveDB('returned'); renderReturnedInventory(); toast('재고 복구 완료');
 }
 
 // ── 재고조사 ───────────────────────────────────────────────
@@ -8037,6 +8040,7 @@ function saveBulkInventory() {
   if (registeredCount === 0) { toast('중량을 입력해주세요','error'); return; }
 
   saveDB();
+  saveDB('inventory');
   closeModal('bulk-inventory');
   renderOrders();
   renderInventory();
@@ -10049,6 +10053,7 @@ function importInventoryFromExcelFile(input) {
       });
 
       saveDB();
+      saveDB('inventory');
       renderInventory();
       input.value = ''; // 같은 파일 재업로드 가능하게
       toast(`✅ 엑셀 업로드 완료 — ${added}개 추가, ${skipped}개 중복 건너뜀${invalid?' (빈행 '+invalid+'개 제외)':''}`);
@@ -10752,6 +10757,7 @@ function deleteSelectedInventory() {
   DB.inventory = DB.inventory.filter(i => !ids.has(String(i.id)));
 
   saveDB('inventory');
+  saveDB('deletedInventory');
   renderInventory();
   toast(`🗑 ${toDelete.length}개 삭제 완료 (삭제재고에서 복구 가능)`);
 }
