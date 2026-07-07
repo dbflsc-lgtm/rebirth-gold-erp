@@ -5187,7 +5187,7 @@ function saveSale(printAfter) {
   };
   DB.sales.push(saleData);
   if (invId) { const inv = DB.inventory.find(i=>i.id==invId); if (inv) { inv.status = '판매'; inv.soldAt = saleData.date; inv.soldTo = saleData.partner; } }
-  saveDB(); saveDB('inventory'); closeModal('sales'); renderSales(); toast('판매 등록 완료');
+  saveDB(); saveDB('inventory'); closeModal('sales'); renderInventory(); renderSales(); toast('판매 등록 완료');
   if (printAfter) setTimeout(() => printReceipt(saleData), 200);
 }
 
