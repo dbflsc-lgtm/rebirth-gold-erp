@@ -10851,3 +10851,221 @@ document.addEventListener('click', e => {
 
 </body>
 </html>
+<script>
+// ═══════════════════════════════════════════════════════════════
+// [패치] 영수증(거래명세서) 반품 표기 — 2026-07-21
+// 기존 함수를 덮어써서 반품 건을 빨간색으로 구분 표기하고
+// 합계표의 "반품" 줄과 "거래 후 미수" 계산에 반품을 반영합니다.
+// index.html 맨 아래 </body> 바로 위에 붙여넣으세요.
+// ═══════════════════════════════════════════════════════════════
+
+// 1) 거래 전 미수 계산 — 이전 반품 공임도 차감
+calcUnpaidBefore = function(partnerId, partnerName, beforeDate) {
+  const salesLabor = DB.sales
+    .filter(s => (s.partnerId===partnerId || s.partner===partnerName) && s.saleType!=='return' && s.date < beforeDate)
+    .reduce((t,s) => t + (parseFloat(s.labor)||0), 0);
+  const returnLabor = DB.sales
+    .filter(s => (s.partnerId===partnerId || s.partner===partnerName) && s.saleType==='return' && s.date < beforeDate)
+    .reduce((t,s) => t + (parseFloat(s.labor)||0), 0);
+  const settledLabor = DB.settlements
+    .filter(st => (st.partnerId===partnerId || st.partnerName===partnerName) && st.date < beforeDate)
+    .reduce((t,st) => t + (parseFloat(st.payLabor)||0), 0);
+  return Math.max(0, salesLabor - returnLabor - settledLabor);
+};
+
+// 2) 영수증 HTML — 반품 행 구분 표기 + 합계 반영
+printReceiptHTML = function(sales, partnerName, date, receiptNo, prevUnpaid, todaySettles=[]) {
+  const salesOnly = sales.filter(s => s.saleType !== 'return');
+  const returns   = sales.filter(s => s.saleType === 'return');
+  // 판매 합계
+  const totalWeight  = salesOnly.reduce((t,s)=>t+Number(s.weight||0),0);
+  const totalPure    = salesOnly.reduce((t,s)=>t+Number(s.pureWeight||0),0);
+  const totalLabor   = salesOnly.reduce((t,s)=>t+Number(s.labor||0),0);
+  const totalPrice   = salesOnly.reduce((t,s)=>t+Number(s.price||0),0);
+  // 반품 합계
+  const retWeight = returns.reduce((t,s)=>t+Number(s.weight||0),0);
+  const retPure   = returns.reduce((t,s)=>t+Number(s.pureWeight||0),0);
+  const retLabor  = returns.reduce((t,s)=>t+Number(s.labor||0),0);
+  const retPrice  = returns.reduce((t,s)=>t+Number(s.price||0),0);
+  // 순(판매-반품)
+  const netWeight = totalWeight - retWeight;
+  const netPure   = totalPure   - retPure;
+  const netLabor  = totalLabor  - retLabor;
+  const netPrice  = totalPrice  - retPrice;
+  const pay = salesOnly[0]?.pay || sales[0]?.pay || '현금';
+  const goldPrice = salesOnly[0]?.goldPrice || sales[0]?.goldPrice || 0;
+  // 당일 결제처리 합계
+  const settledGold  = todaySettles.reduce((t,st)=>t+(parseFloat(st.payGold)||0),0);
+  const settledLabor = todaySettles.reduce((t,st)=>t+(parseFloat(st.payLabor)||0),0);
+  const settledPayMethod = todaySettles.length ? todaySettles[todaySettles.length-1].payMethod : pay;
+  const lastSettleDate = todaySettles.length ? todaySettles[todaySettles.length-1].date : '';
+  // 거래 후 미수 = 전 미수 + (당일 판매 - 당일 반품) - 당일 결제
+  const afterUnpaidLabor = Math.max(0, prevUnpaid + netLabor - settledLabor);
+  const afterUnpaidGold  = Math.max(0, netPure - settledGold);
+  // 제품 행 (최소 12행)
+  const MIN_ROWS = 12;
+  const itemRowsHTML = sales.map((s,i) => {
+    const isReturn = s.saleType === 'return';
+    const photo = getCatalogPhoto(s.model);
+    const photoCell = photo
+      ? `<img src="${s.photo||photo}" style="width:38px;height:38px;object-fit:cover;border:0.5px solid #ddd;display:block;margin:auto${isReturn?';opacity:0.55':''}">`
+      : `<div style="width:38px;height:38px;background:#f5f5f5;border:0.5px solid #ddd;margin:auto"></div>`;
+    const rc = isReturn ? '#c0392b' : '#1a1a1a';       // 반품이면 빨강
+    const rowBg = isReturn ? 'background:#fff5f5;' : '';
+    return `<tr style="border-bottom:0.5px solid #e0e0e0;${rowBg}">
+      <td style="padding:5px 4px;text-align:center;font-size:11px;color:#666;width:22px">${i+1}</td>
+      <td style="padding:4px;text-align:center;width:42px">${photoCell}</td>
+      <td style="padding:5px 6px;font-size:11px">
+        <div style="font-weight:600;color:${rc}">${isReturn?'<span style="display:inline-block;background:#c0392b;color:#fff;font-size:8px;font-weight:700;padding:1px 4px;border-radius:2px;margin-right:3px;vertical-align:middle">반품</span>':''}${s.model||'—'}</div>
+        <div style="color:${isReturn?'#c0392b':'#888'};font-size:10px;margin-top:1px">${isReturn?(s.returnReason||'반품 처리'):(s.mfr||'')}</div>
+      </td>
+      <td style="padding:5px 4px;text-align:center;font-size:11px;width:34px;color:${rc}">${s.mat||'—'}</td>
+      <td style="padding:5px 4px;text-align:center;font-size:11px;width:42px;color:${rc}">${isReturn?'-':''}${Number(s.weight||0).toFixed(3)}</td>
+      <td style="padding:5px 4px;text-align:center;font-size:11px;width:46px;color:${isReturn?'#c0392b':'#1a6b3c'};font-weight:500">${isReturn?'-':''}${Number(s.pureWeight||0).toFixed(4)}</td>
+      <td style="padding:5px 4px;text-align:center;font-size:11px;width:22px;color:${rc}">${isReturn?'-1':'1'}</td>
+      <td style="padding:5px 4px;text-align:right;font-size:11px;width:52px;color:${rc}">${s.labor?(isReturn?'-':'')+Number(s.labor).toLocaleString('ko-KR'):''}</td>
+      <td style="padding:5px 4px;text-align:right;font-size:11px;width:52px;color:${rc}">${s.goldPrice?Number(s.goldPrice).toLocaleString('ko-KR'):''}</td>
+      <td style="padding:5px 4px;text-align:right;font-size:11px;width:58px;font-weight:600;color:${rc}">${isReturn?'-':''}${Number(s.price||0).toLocaleString('ko-KR')}</td>
+    </tr>`;
+  }).join('');
+  const blankCount = Math.max(0, MIN_ROWS - sales.length);
+  const blankRowsHTML = Array(blankCount).fill('').map((_,i) => `<tr style="height:28px;border-bottom:0.5px solid #f0f0f0">
+    <td style="padding:4px;text-align:center;font-size:10px;color:#ccc">${sales.length+i+1}</td>
+    <td colspan="9">${i===0?'<span style="font-size:10px;color:#ccc;padding-left:8px">— 이하 여백 —</span>':''}</td>
+  </tr>`).join('');
+  const receiptBlock = (title) => `
+<div style="width:100%;border:1px solid #bbb;padding:0;font-family:'Noto Sans KR',Arial,sans-serif;font-size:11px;color:#1a1a1a;page-break-inside:avoid">
+  <div style="background:#2c2c2c;color:#fff;text-align:center;padding:7px 0;font-size:13px;font-weight:600;letter-spacing:0.2em">${title}</div>
+  <div style="padding:8px 10px;border-bottom:1px solid #ddd;display:grid;grid-template-columns:1fr 1fr;gap:3px 10px;font-size:10px">
+    <div><span style="color:#888">일 자:</span> <strong>${date}</strong></div>
+    <div><span style="color:#888">거래처:</span> <strong>${partnerName}</strong></div>
+    <div><span style="color:#888">N o:</span> <strong>${receiptNo}</strong></div>
+    <div><span style="color:#888">공급자:</span> <strong>REBIRTH GOLD</strong></div>
+    <div><span style="color:#888">시 세:</span> <strong>${goldPrice?Number(goldPrice).toLocaleString('ko-KR')+'원/g':''}</strong></div>
+    <div><span style="color:#888">결 제:</span> <strong>${pay}</strong></div>
+  </div>
+  <table style="width:100%;border-collapse:collapse">
+    <thead>
+      <tr style="background:#f0f0f0;border-bottom:1.5px solid #bbb">
+        <th style="padding:5px 3px;font-size:9px;text-align:center;font-weight:600;color:#444;border-right:0.5px solid #ddd;width:22px">No</th>
+        <th style="padding:5px 3px;font-size:9px;text-align:center;font-weight:600;color:#444;border-right:0.5px solid #ddd;width:42px">사진</th>
+        <th style="padding:5px 6px;font-size:9px;text-align:center;font-weight:600;color:#444;border-right:0.5px solid #ddd">모델번호<br><span style="font-weight:400;color:#888">비고사항</span></th>
+        <th style="padding:5px 3px;font-size:9px;text-align:center;font-weight:600;color:#444;border-right:0.5px solid #ddd;width:34px">함량</th>
+        <th style="padding:5px 3px;font-size:9px;text-align:center;font-weight:600;color:#444;border-right:0.5px solid #ddd;width:42px">금중량<br>(g)</th>
+        <th style="padding:5px 3px;font-size:9px;text-align:center;font-weight:600;color:#1a6b3c;border-right:0.5px solid #ddd;width:46px">순금환산<br>(g)</th>
+        <th style="padding:5px 3px;font-size:9px;text-align:center;font-weight:600;color:#444;border-right:0.5px solid #ddd;width:22px">수량</th>
+        <th style="padding:5px 3px;font-size:9px;text-align:center;font-weight:600;color:#444;border-right:0.5px solid #ddd;width:52px">공임<br>단가</th>
+        <th style="padding:5px 3px;font-size:9px;text-align:center;font-weight:600;color:#444;border-right:0.5px solid #ddd;width:52px">금감<br>단가</th>
+        <th style="padding:5px 3px;font-size:9px;text-align:center;font-weight:600;color:#444;width:58px">소계</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${itemRowsHTML}
+      ${blankRowsHTML}
+    </tbody>
+    <tfoot>
+      <tr style="background:#f9f9f7;border-top:1.5px solid #bbb">
+        <td colspan="3" style="padding:5px 8px;font-size:10px;color:#555;border-right:0.5px solid #ddd">(판매-반품) 소계 [1/1]${returns.length?` <span style="color:#c0392b">· 반품 ${returns.length}건</span>`:''}</td>
+        <td style="padding:5px 4px;text-align:center;font-size:10px;font-weight:600;border-right:0.5px solid #ddd">${salesOnly[0]?.mat||''}</td>
+        <td style="padding:5px 4px;text-align:center;font-size:11px;font-weight:700;border-right:0.5px solid #ddd">${netWeight.toFixed(3)}</td>
+        <td style="padding:5px 4px;text-align:center;font-size:11px;font-weight:700;color:#1a6b3c;border-right:0.5px solid #ddd">${netPure.toFixed(4)}</td>
+        <td style="padding:5px 4px;text-align:center;font-size:11px;font-weight:700;border-right:0.5px solid #ddd">${salesOnly.length - returns.length}</td>
+        <td style="padding:5px 4px;text-align:right;font-size:11px;font-weight:700;border-right:0.5px solid #ddd">${netLabor?netLabor.toLocaleString('ko-KR'):''}</td>
+        <td style="padding:5px 4px;border-right:0.5px solid #ddd"></td>
+        <td style="padding:5px 4px;text-align:right;font-size:11px;font-weight:700">${netPrice.toLocaleString('ko-KR')}</td>
+      </tr>
+    </tfoot>
+  </table>
+  <table style="width:100%;border-collapse:collapse;border-top:1px solid #ccc">
+    <thead>
+      <tr style="background:#f0f0f0">
+        <th style="padding:4px 6px;font-size:9px;font-weight:600;color:#444;border:0.5px solid #ddd;width:70px"></th>
+        <th style="padding:4px;font-size:9px;font-weight:600;color:#444;border:0.5px solid #ddd;text-align:center" colspan="2">순금(g)</th>
+        <th style="padding:4px;font-size:9px;font-weight:600;color:#444;border:0.5px solid #ddd;text-align:center" colspan="2">순금(돈)</th>
+        <th style="padding:4px;font-size:9px;font-weight:600;color:#444;border:0.5px solid #ddd;text-align:center">공임 및 현금</th>
+        <th style="padding:4px;font-size:9px;font-weight:600;color:#444;border:0.5px solid #ddd;text-align:center">금감포함 합계</th>
+        <th style="padding:4px;font-size:9px;font-weight:600;color:#444;border:0.5px solid #ddd;text-align:center">최근결제일</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td style="padding:4px 6px;font-size:10px;color:#c0392b;font-weight:500;border:0.5px solid #ddd">✔거래 전 미수</td>
+        <td colspan="6" style="padding:4px;font-size:10px;text-align:right;color:#c0392b;border:0.5px solid #ddd">${prevUnpaid>0?prevUnpaid.toLocaleString('ko-KR'):''}</td>
+        <td style="border:0.5px solid #ddd"></td>
+      </tr>
+      <tr style="background:#fffde7">
+        <td style="padding:5px 6px;font-size:10px;font-weight:500;border:0.5px solid #ddd">판 매</td>
+        <td colspan="2" style="padding:5px 4px;text-align:center;font-size:11px;font-weight:700;border:0.5px solid #ddd">${totalPure.toFixed(3)}</td>
+        <td colspan="2" style="padding:5px 4px;text-align:center;font-size:11px;font-weight:700;border:0.5px solid #ddd">${toDon(totalPure)}</td>
+        <td style="padding:5px 4px;text-align:right;font-size:11px;font-weight:700;border:0.5px solid #ddd">${totalLabor?totalLabor.toLocaleString('ko-KR'):''}</td>
+        <td style="padding:5px 4px;text-align:right;font-size:11px;font-weight:700;border:0.5px solid #ddd">${totalPrice.toLocaleString('ko-KR')}</td>
+        <td style="border:0.5px solid #ddd"></td>
+      </tr>
+      <tr style="${returns.length?'background:#fff0f0':''}">
+        <td style="padding:4px 6px;font-size:10px;color:#c0392b;font-weight:${returns.length?'700':'400'};border:0.5px solid #ddd">반 품${returns.length?` (${returns.length}건)`:''}</td>
+        <td colspan="2" style="padding:4px;text-align:center;font-size:11px;font-weight:600;color:#c0392b;border:0.5px solid #ddd">${retPure>0?'-'+retPure.toFixed(3):''}</td>
+        <td colspan="2" style="padding:4px;text-align:center;font-size:11px;font-weight:600;color:#c0392b;border:0.5px solid #ddd">${retPure>0?'-'+toDon(retPure):''}</td>
+        <td style="padding:4px;text-align:right;font-size:11px;font-weight:600;color:#c0392b;border:0.5px solid #ddd">${retLabor>0?'-'+retLabor.toLocaleString('ko-KR'):''}</td>
+        <td style="padding:4px;text-align:right;font-size:11px;font-weight:600;color:#c0392b;border:0.5px solid #ddd">${retPrice>0?'-'+retPrice.toLocaleString('ko-KR'):''}</td>
+        <td style="border:0.5px solid #ddd"></td>
+      </tr>
+      <tr>
+        <td style="padding:4px 6px;font-size:10px;border:0.5px solid #ddd">D C</td>
+        <td colspan="6" style="border:0.5px solid #ddd"></td><td style="border:0.5px solid #ddd"></td>
+      </tr>
+      <tr style="background:#fffde7">
+        <td style="padding:4px 6px;font-size:10px;border:0.5px solid #ddd;font-weight:600">결 제 (${settledPayMethod})</td>
+        <td colspan="2" style="padding:4px;text-align:center;font-size:11px;font-weight:600;border:0.5px solid #ddd;color:#8a6500">${settledGold>0?settledGold.toFixed(3):''}</td>
+        <td colspan="2" style="padding:4px;text-align:center;font-size:11px;border:0.5px solid #ddd;color:#8a6500">${settledGold>0?toDon(settledGold):''}</td>
+        <td style="padding:4px;text-align:right;font-size:11px;font-weight:600;border:0.5px solid #ddd;color:#8a6500">${settledLabor>0?settledLabor.toLocaleString('ko-KR'):''}</td>
+        <td style="padding:4px;text-align:right;font-size:11px;border:0.5px solid #ddd;color:#8a6500">${lastSettleDate||''}</td>
+        <td style="border:0.5px solid #ddd"></td>
+      </tr>
+      <tr style="background:#fff0f0">
+        <td style="padding:5px 6px;font-size:10px;color:#c0392b;font-weight:700;border:0.5px solid #ddd">✔거래 후 미수</td>
+        <td colspan="2" style="padding:5px 4px;text-align:center;font-size:11px;font-weight:700;color:#c0392b;border:0.5px solid #ddd">${afterUnpaidGold>0?afterUnpaidGold.toFixed(3):'0.000'}</td>
+        <td colspan="2" style="padding:5px 4px;text-align:center;font-size:11px;font-weight:700;color:#c0392b;border:0.5px solid #ddd">${afterUnpaidGold>0?toDon(afterUnpaidGold):'0.000'}</td>
+        <td style="padding:5px 4px;text-align:right;font-size:11px;font-weight:700;color:#c0392b;border:0.5px solid #ddd">${afterUnpaidLabor>0?afterUnpaidLabor.toLocaleString('ko-KR'):'0'}</td>
+        <td style="padding:5px 4px;text-align:right;font-size:11px;font-weight:700;color:#c0392b;border:0.5px solid #ddd">${(prevUnpaid+netPrice-settledLabor)>0?(prevUnpaid+netPrice-settledLabor).toLocaleString('ko-KR'):'0'}</td>
+        <td style="border:0.5px solid #ddd"></td>
+      </tr>
+    </tbody>
+  </table>
+  <div style="text-align:right;padding:4px 8px;font-size:9px;color:#aaa;border-top:0.5px solid #eee">REBIRTH GOLD</div>
+</div>`;
+  const w = window.open('', '_blank', 'width=860,height=800');
+  w.document.write(`<!DOCTYPE html>
+<html lang="ko"><head><meta charset="UTF-8">
+<title>거래명세서 - ${partnerName} - ${date}</title>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { font-family:'Noto Sans KR',sans-serif; background:#d0d0d0; padding:16px; }
+  .no-print { text-align:center; margin-bottom:14px; display:flex; gap:10px; justify-content:center; }
+  .print-btn { background:#2c2c2c; border:none; color:#fff; padding:9px 26px; font-size:13px; cursor:pointer; letter-spacing:0.05em; border-radius:3px; }
+  .sheet { display:flex; gap:12px; justify-content:center; align-items:flex-start; background:white; padding:16px; box-shadow:0 2px 8px rgba(0,0,0,0.15); width:fit-content; margin:0 auto; }
+  .receipt-wrap { width:390px; flex-shrink:0; overflow:hidden; }
+  @media print {
+    body { background:white; padding:0; margin:0; }
+    .no-print { display:none !important; }
+    .sheet { padding:4px; gap:8px; box-shadow:none; width:100%; page-break-inside:avoid; }
+    .receipt-wrap { width:48%; }
+  }
+</style>
+</head><body>
+<div class="no-print">
+  <button class="print-btn" onclick="window.print()">인쇄</button>
+  <button onclick="window.close()" style="background:#888;border:none;color:#fff;padding:9px 18px;font-size:13px;cursor:pointer;border-radius:3px">닫기</button>
+</div>
+<div class="sheet">
+  <div class="receipt-wrap">${receiptBlock(`[${partnerName}] 거 래 명 세 서`)}</div>
+  <div class="receipt-wrap">${receiptBlock(`[${partnerName}] 거 래 명 세 서`)}</div>
+</div>
+</body></html>`);
+  w.document.close();
+};
+
+// 3) 반품 건에도 영수증 버튼이 동작하도록 판매목록의 반품 행에서도 영수증 출력 허용
+//    (기존 renderSales는 반품 행에 영수증 버튼이 없어서 그대로 두어도 무방)
+console.log('✅ 반품표기 패치 적용됨 — 영수증에 반품 구분 표기 + 합계 반영');
+</script>
